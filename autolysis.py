@@ -55,7 +55,7 @@ def get_dataset_encoding(dataset_file):
     return result.get('encoding', 'utf-8')
 
 
-def perform_generic_analysis(data):
+def generic_analysis(data):
     results = {
         'first_5': data.head(),
         'summary_stats': data.describe(),
@@ -147,7 +147,7 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
         ]
     }
     response = requests.post(url, headers=headers, json=data)
-    return response.json()['choices'][0]['message']['content']
+    return response.json()
 
 
 def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-mini'):
@@ -357,8 +357,58 @@ def clustering_analysis(dataset_file, data, api_key):
     }
 
 # TODO: Geographic Analysis 
+def geographic_analysis(dataset_file, data, api_key):
+    pass
 
 
+# def describe_data(dataset_file, data, api_key):
+#     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+#     message = (
+#         f"You are given a file {dataset_file}.\n\n"
+#         "With features:\n"
+#         f"{columns_info}\n\n"
+#         "Here are a few samples:\n"
+#         f"{data.iloc[:3, :]}\n\n"
+#     )
+#     prompt = message + (
+#         "Give a short description about the given dataset. Also give bullet points describing each attribute in the dataset. Just output the description in markdown format."
+#     )
+
+#     response = chat(prompt=prompt, api_key=api_key)
+
+#     print(response)
+#     # print(response['choices'][0]['message']['content'])
+#     return response
+
+
+def describe_generic_analysis(results, dataset_file, data, api_key):
+    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+
+    message = (
+        f"You are given a file: {dataset_file}\n\n"
+        "Features:\n"
+        f"{columns_info}\n\n"
+        "Here are a few samples:\n"
+        f"{results['first_5']}\n\n"
+        "Summary Statistics:\n"
+        f"{results['summary_stats']}\n\n"
+        "Missing Values:\n"
+        f"{results['missing_values']}\n\n"
+        "Number of unique values in each column:\n"
+        f"{results['n_unique']}\n\n"
+        "Number of duplicated rows:\n"
+        f"{results['n_duplicates']}\n\n"
+        "Correlation Analysis:\n"
+        f"{results['corr']}\n\n"
+    )
+    prompt = message + (
+        "Give a short description about the given dataset. Also provide a brief yet detailed description of the given statistical analysis. Output in valid markdown format."
+    )
+
+    print(prompt)
+    response = chat(prompt=prompt, api_key=api_key)
+    return response
+    # response['choices'][0]['message']['content']
 
 
 def main():
@@ -374,7 +424,7 @@ def main():
 
     df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
 
-    generic_analysis_results = perform_generic_analysis(data=df)
+    generic_analysis_results = generic_analysis(data=df)
     # write_generic_analysis_md('README.md', results=generic_analysis_results)
 
     # n_outliers = outlier_detection(df, df.columns)
@@ -386,6 +436,9 @@ def main():
     # print(corr_result)
 
     # clustering_analysis(dataset_file, df, api_key)
+
+    # description_basic = describe_data(dataset_file, df, api_key)
+    description_gen = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
 
 
 if __name__ == '__main__':
