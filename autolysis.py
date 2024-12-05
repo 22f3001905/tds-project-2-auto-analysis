@@ -228,9 +228,10 @@ from sklearn.ensemble import IsolationForest
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
+from sklearn.cluster import KMeans
 
 
-def outlier_detection(data, columns):
+def outlier_detection(dataset_file, data, api_key, columns):
     df = data[columns]
     df = df.select_dtypes(include=['number'])
 
@@ -323,9 +324,7 @@ def correlation_analysis(dataset_file, data, api_key):
         return numeric_data.corr()
 
 
-from sklearn.cluster import KMeans
-
-def clustering_analysis(dataset_file, data, api_key):
+def cluster_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     message = f'You are given a file {dataset_file}.\n\nWith features:\n\n{columns_info}\n\nHere is a sample:\n\n{data.iloc[0, :]}'
     
@@ -356,29 +355,72 @@ def clustering_analysis(dataset_file, data, api_key):
         'cluster_centers': pipe['kmeans'].cluster_centers_
     }
 
+
 # TODO: Geographic Analysis 
 def geographic_analysis(dataset_file, data, api_key):
     pass
 
 
-# def describe_data(dataset_file, data, api_key):
-#     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-#     message = (
-#         f"You are given a file {dataset_file}.\n\n"
-#         "With features:\n"
-#         f"{columns_info}\n\n"
-#         "Here are a few samples:\n"
-#         f"{data.iloc[:3, :]}\n\n"
-#     )
-#     prompt = message + (
-#         "Give a short description about the given dataset. Also give bullet points describing each attribute in the dataset. Just output the description in markdown format."
-#     )
+# TODO: Network Analysis
+def network_analysis():
+    pass
 
-#     response = chat(prompt=prompt, api_key=api_key)
 
-#     print(response)
-#     # print(response['choices'][0]['message']['content'])
-#     return response
+def choose_analysis(dataset_file, data, api_key, analyses):
+    for analysis in analyses:
+        func = eval(analysis)
+        func(dataset_file, data, api_key)
+
+
+def meta_analysis(dataset_file, data, api_key):
+    analysis_function_descriptions = [
+        {
+            'name': 'choose_analysis',
+            'description': 'A function to choose all the relevant analysis to be performed for a dataset.',
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "analyses": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of analysis to perform in order. Eg. ['Regression Analysis', 'Cluster Analysis']",
+                    },
+                },
+                "required": ["indices"]
+            }
+        }
+    ]
+    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+    message = (
+        f"You are given a file {dataset_file}.\n\n"
+        "With features:\n"
+        f"{columns_info}\n\n"
+        "Here are a few samples:\n"
+        f"{data.iloc[:3, :]}\n\n"
+    )
+    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
+                'cluster_analysis', 'geographic_analysis']
+    
+    unorder_list_analyses = "\n".join([f'{i+1}. {analysis_name}' 
+                                       for (i, analysis_name) in enumerate(analyses)])
+    prompt = message + (
+        "Perform only a few appropriate analyses. Make sure they are in correct order.\n\n"
+        "Analysis options:\n"
+        f"{unorder_list_analyses}\n\n"
+        "Call the choose_analysis function with the correct options."
+    )
+    response = chat_function_call(prompt=prompt, api_key=api_key, 
+                                  function_descriptions=analysis_function_descriptions)
+    print(response)
+
+    params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
+    chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+
+    chosen_func(**params)
+
+    return response
 
 
 def describe_generic_analysis(results, dataset_file, data, api_key):
@@ -427,7 +469,7 @@ def main():
     generic_analysis_results = generic_analysis(data=df)
     # write_generic_analysis_md('README.md', results=generic_analysis_results)
 
-    # n_outliers = outlier_detection(df, df.columns)
+    # n_outliers = outlier_detection(dataset_file, df, api_key, df.columns)
     # print(f'# outliers: {n_outliers} out of {df.shape[0]}')
 
     # reg_results = regression_analysis(dataset_file, df, api_key)
@@ -435,10 +477,13 @@ def main():
     # corr_result = correlation_analysis(dataset_file, df, api_key)
     # print(corr_result)
 
-    # clustering_analysis(dataset_file, df, api_key)
+    # cluster_analysis(dataset_file, df, api_key)
 
-    # description_basic = describe_data(dataset_file, df, api_key)
-    description_gen = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
+    # Describe the given dataset.
+    # generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
+
+    # Perform non-generic analysis.
+    # result = meta_analysis(dataset_file, df, api_key)
 
 
 if __name__ == '__main__':
