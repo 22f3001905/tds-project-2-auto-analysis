@@ -2,7 +2,6 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "chardet",
-#     "json",
 #     "pandas",
 #     "python-dotenv",
 #     "requests",
@@ -110,6 +109,12 @@ def generic_analysis(data):
 #         f.write(f"Number of duplicated rows: {results['n_duplicates']}\n\n")
 
 #     print(f"Analysis written to {md_file}")
+
+def write_file(file_name, text_content, title):
+    with open(file_name, "a") as f:
+        if title:
+            f.write("# " + title + "\n\n")
+        f.write(text_content)
 
 
 def text_embedding(query, api_key, model='text-embedding-3-small'):
@@ -292,7 +297,6 @@ def regression_analysis(dataset_file, data, api_key):
     rmse = mse ** 0.5
 
     return {
-        'model': pipe,
         'r2_score': r2_score,
         'mae': mae,
         'mse': mse,
@@ -339,7 +343,8 @@ def cluster_analysis(dataset_file, data, api_key):
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
     
     df = chosen_func(data=data, **params)
-    # TODO
+
+    # TODO: Use LLM to separate numerical cols from categorical cols.
     df = df.select_dtypes(include=['number'])
 
     pipe = Pipeline([
@@ -350,10 +355,11 @@ def cluster_analysis(dataset_file, data, api_key):
 
     pipe.fit(df)
 
-    return {
-        'cluster_labels': pipe['kmeans'].labels_,
-        'cluster_centers': pipe['kmeans'].cluster_centers_
-    }
+    # return {
+    #     'cluster_labels': pipe['kmeans'].labels_,
+    #     'cluster_centers': pipe['kmeans'].cluster_centers_
+    # }
+    return None
 
 
 # TODO: Geographic Analysis 
@@ -367,9 +373,14 @@ def network_analysis():
 
 
 def choose_analysis(dataset_file, data, api_key, analyses):
+    results = {}
     for analysis in analyses:
         func = eval(analysis)
-        func(dataset_file, data, api_key)
+        res = func(dataset_file, data, api_key)
+        if res:
+            results[analysis] = res
+    
+    return results
 
 
 def meta_analysis(dataset_file, data, api_key):
@@ -416,11 +427,15 @@ def meta_analysis(dataset_file, data, api_key):
     print(response)
 
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-    chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+    choose_analysis_func = eval(response['choices'][0]['message']['function_call']['name'])
 
-    chosen_func(**params)
+    analysis_results = choose_analysis_func(**params)
 
-    return response
+    # TODO: Use LLM to generate a descriptive summary of the results.
+    for analysis_func, analysis_res in analysis_results:
+        pass
+
+    return None
 
 
 def describe_generic_analysis(results, dataset_file, data, api_key):
@@ -449,8 +464,7 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
 
     print(prompt)
     response = chat(prompt=prompt, api_key=api_key)
-    return response
-    # response['choices'][0]['message']['content']
+    return response['choices'][0]['message']['content']
 
 
 def main():
@@ -467,8 +481,8 @@ def main():
     df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
 
     generic_analysis_results = generic_analysis(data=df)
-    # write_generic_analysis_md('README.md', results=generic_analysis_results)
 
+    # TESTING
     # n_outliers = outlier_detection(dataset_file, df, api_key, df.columns)
     # print(f'# outliers: {n_outliers} out of {df.shape[0]}')
 
@@ -480,10 +494,16 @@ def main():
     # cluster_analysis(dataset_file, df, api_key)
 
     # Describe the given dataset.
-    # generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
+    generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
+    write_file('README.md', generated_description)
 
     # Perform non-generic analysis.
-    # result = meta_analysis(dataset_file, df, api_key)
+    # meta_analysis_results = meta_analysis(dataset_file, df, api_key)
+    # generated_analysis_description =  None
+    # write_file('README.md', generated_analysis_description, title='Advanced Data Analysis')
+
+    # TODO: Describe the insights that were gained by this previous analysis.
+    # TODO: Describe the implications of your findings. (What to do with the insights?)
 
 
 if __name__ == '__main__':

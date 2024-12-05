@@ -1,55 +1,52 @@
-## Dataset Description
+# Dataset Description
 
-The dataset `media.csv` contains information about various media titles (primarily movies) characterized by several features:
+The `media.csv` dataset contains information about various media items, specifically films, including their release date, language, type, title, cast, and ratings. It consists of:
+- **Features**: 
+  - `date`: Release date of the media item (object).
+  - `language`: Language of the media (object).
+  - `type`: Type of media (e.g., movie) (object).
+  - `title`: Title of the media (object).
+  - `by`: Cast of the media (object).
+  - `overall`: Overall rating (integer).
+  - `quality`: Quality rating (integer).
+  - `repeatability`: Repeatability rating (integer).
 
-- **`date`**: The release date of the media, recorded as an object.
-- **`language`**: Language of the media (e.g., Tamil, Telugu).
-- **`type`**: Type of media, predominantly movies.
-- **`title`**: Title of the media.
-- **`by`**: Creators or cast of the title.
-- **`overall`**: General rating given to the media (integer scale).
-- **`quality`**: Quality rating (integer scale).
-- **`repeatability`**: Frequency of being watched or the likelihood of rewatching (integer scale).
+# Statistical Analysis Summary
 
-## Statistical Analysis
-
-### Summary Statistics
-- **Count**: 2652 entries in total for ratings.
-- **Mean Ratings**: 
-  - Overall average rating: 3.05
-  - Average quality rating: 3.21
-  - Average repeatability: 1.49
-- **Standard Deviation**: Indicates variability:
-  - Overall: 0.76
-  - Quality: 0.80
-  - Repeatability: 0.60
+## Summary Statistics
+- **Count**: Total entries are 2652 across ratings.
+- **Mean Ratings**:
+  - `overall`: 3.05
+  - `quality`: 3.21
+  - `repeatability`: 1.49
+- **Standard Deviation**: 
+  - `overall`: 0.76
+  - `quality`: 0.80
+  - `repeatability`: 0.60
 - **Rating Ranges**: 
-  - Overall and quality ratings range from 1 to 5.
-  - Repeatability values range from 1 to 3.
-- **Percentiles**:
-  - 25% of overall ratings are ≥ 3.
-  - 50% (median) ratings are 3 for both overall and quality.
-  - 75% quality ratings are 4.
+  - Ratings span from 1 to 5 for `overall` and `quality`. 
+  - `repeatability` ranges from 1 to 3.
 
-### Missing Values
-- **`date`**: 99 missing values.
-- **`by`**: 262 missing values.
-- Other columns have no missing values.
+## Missing Values
+- **Missing Entries**:
+  - `date`: 99 missing values.
+  - `by`: 262 missing values.
+- Other features have no missing values.
 
-### Unique Values
-- The dataset features a diverse range of unique values:
-  - **`date`**: 2055 unique dates.
-  - **`language`**: 11 languages.
-  - **`type`**: 8 different types.
-  - **`title`**: 2312 unique titles.
-  - **`by`**: 1528 contributors.
+## Unique Value Counts
+- **Date**: 2055 unique release dates.
+- **Languages**: 11 unique languages.
+- **Types**: 8 unique types of media.
+- **Titles**: 2312 unique titles.
+- **Contributors**: 1528 unique casts.
+
+## Duplicates
+- There is **1 duplicated row** in the dataset.
+
+## Correlation Analysis
+- **Correlation Coefficients**:
+  - `overall` to `quality`: Strong positive correlation (0.83).
+  - `overall` to `repeatability`: Moderate positive correlation (0.51).
+  - `quality` to `repeatability`: Weak-to-moderate positive correlation (0.31).
   
-### Duplicates
-- There is 1 duplicated row in the dataset.
-
-### Correlation Analysis
-- **Overall and Quality Ratings**: Strong positive correlation (0.83).
-- **Overall and Repeatability**: Moderate positive correlation (0.51).
-- **Quality and Repeatability**: Weaker correlation (0.31).
-
-This analysis identifies potential relationships between ratings, indicating that as overall ratings increase, quality ratings also tend to be higher, which may inform further study into media performance based on these features.
+Overall, the dataset captures a variety of media ratings with certain strong relationships, particularly between overall ratings and quality. The presence of missing values, particularly in the `date` and `by` fields, may require further attention during analysis.
