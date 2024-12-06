@@ -80,7 +80,7 @@ def generic_analysis(data):
     return results
 
 
-def write_file(file_name, text_content, title):
+def write_file(file_name, text_content, title=None):
     with open(file_name, "a") as f:
         if title:
             f.write("# " + title + "\n\n")
@@ -123,12 +123,40 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
         ]
     }
     response = requests.post(url, headers=headers, json=data)
-
-    if response.get('error', None):
-        print('LLM Error:\n', response)
-        return None
-    
     return response.json()
+
+import requests
+
+def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
+    url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}'
+    }
+    data = {
+        'model': model,
+        'messages': [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': prompt
+                    },
+                    {
+                        'type': 'image_url',
+                        'image_url': {
+                            'url': f'data:image/png;base64,{base64_image}',
+                            "detail": "low"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    res = requests.post(url, headers=headers, json=data)
+    return res.json()['choices'][0]['message']['content']
 
 
 def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-mini'):
@@ -148,13 +176,14 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
         'functions': function_descriptions,
         'function_call': 'auto'
     }
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(url, headers=headers, json=data)    
+    output = response.json()
 
-    if response.get('error', None):
-        print('LLM Error:\n', response)
+    if output.get('error', None):
+        print('LLM Error:\n', output)
         return None
     
-    return response.json()
+    return output
 
 
 filter_function_description = [
@@ -233,21 +262,36 @@ def outlier_detection(dataset_file, data, api_key):
     isolation_forest.fit(df_tr)
 
     anomaly_score = isolation_forest.predict(df_tr)
-    return { 'n_anomalies': (anomaly_score == -1).sum() }
+    return { 
+        'n_anomalies': (anomaly_score == -1).sum(), 
+        'n_samples': df_tr.shape[0]
+    }
 
 
 # TODO: Add classification_analysis
 
 def regression_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    message = f'You are given a file {dataset_file}.\n\nWith features:\n\n{columns_info}\n\nHere is a sample:\n\n{data.iloc[0, :]}'
-    
-    response = chat_function_call(prompt=message + "\n\nExtract the features and target for Regression task. Make sure to NOT include the target variable in the features list.", api_key=api_key, function_descriptions=filter_function_description)
+    prompt = f"""\
+    You are given a file {dataset_file}.
 
-    if response.get('error', None):
-        return None
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract the features and target for Regression task.
+    Note: Do not include column names that include the word 'id'.
+
+    Make sure to NOT include the target variable in the features list.
+    """
+    
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
 
     # print(response)
+    if not response:
+        return None
 
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
@@ -297,14 +341,27 @@ def regression_analysis(dataset_file, data, api_key):
 
 def correlation_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    message = f'You are given a file {dataset_file}.\n\nWith features:\n\n{columns_info}\n\nHere is a sample:\n\n{data.iloc[0, :]}'
-    
-    response = chat_function_call(prompt=message + "\n\nExtract only the most important features to perform a Correlation analysis. (Use filter_features)", api_key=api_key, function_descriptions=filter_function_description)
+    prompt = f"""\
+    You are given a file {dataset_file}.
 
-    if response.get('error', None):
-        exit()
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract only the most important features to perform a Correlation analysis.
+    Eg. 'height', 'weight', etc.
+    
+    Note: Do not include column names that include the word 'id'.
+    Hint: Use function filter_features.
+    """
+    
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
 
     # print(response)
+    if not response:
+        return None
     
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
@@ -323,15 +380,25 @@ def correlation_analysis(dataset_file, data, api_key):
 
 def cluster_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    message = f'You are given a file {dataset_file}.\n\nWith features:\n\n{columns_info}\n\nHere is a sample:\n\n{data.iloc[0, :]}'
-    
-    response = chat_function_call(prompt=message + "\n\nExtract only the most important features to perform a Clustering analysis using K-Means. (Use filter_features)", api_key=api_key, function_descriptions=filter_function_description)
+    prompt = f"""\
+    You are given a file {dataset_file}.
 
-    if response.get('error', None):
-        print('LLM Error:\n', response)
-        return None
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract only the most important features to perform a Clustering analysis using K-Means.
+    Note: Do not include column names that include the word 'id'. 
+    Hint: Use function filter_features.
+    """
+    
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
 
     # print(response)
+    if not response:
+        return None
     
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
@@ -404,26 +471,29 @@ def meta_analysis(dataset_file, data, api_key):
         }
     ]
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    message = (
-        f"You are given a file {dataset_file}.\n\n"
-        "With features:\n"
-        f"{columns_info}\n\n"
-        "Here are a few samples:\n"
-        f"{data.iloc[:3, :]}\n\n"
-    )
-    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
-                'cluster_analysis', 'geographic_analysis']
     
-    unorder_list_analyses = "\n".join([f'{i+1}. {analysis_name}' 
-                                       for (i, analysis_name) in enumerate(analyses)])
-    prompt = message + (
-        "Perform only a few appropriate analyses. Make sure they are in correct order.\n\n"
-        "Analysis options:\n"
-        f"{unorder_list_analyses}\n\n"
-        "Call the choose_analysis function with the correct options."
-    )
-    response = chat_function_call(prompt=prompt, api_key=api_key, 
-                                  function_descriptions=analysis_function_descriptions)
+    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 'cluster_analysis', 'geographic_analysis']
+    
+    unorder_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(analyses)])
+    
+    prompt = f"""\
+    You are given a file {dataset_file}.
+
+    With features:
+    {columns_info}
+
+    Here are a few samples:
+    {data.iloc[:3, :]}
+
+    Perform only a few appropriate analyses. Make sure they are in correct order.
+
+    Analysis options:
+    {unorder_list_analyses}
+
+    Call the choose_analysis function with the correct options.
+    """
+
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=analysis_function_descriptions)
     # print(response)
 
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
@@ -438,26 +508,34 @@ def meta_analysis(dataset_file, data, api_key):
 def describe_generic_analysis(results, dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
 
-    message = (
-        f"You are given a file: {dataset_file}\n\n"
-        "Features:\n"
-        f"{columns_info}\n\n"
-        "Here are a few samples:\n"
-        f"{results['first_5']}\n\n"
-        "Summary Statistics:\n"
-        f"{results['summary_stats']}\n\n"
-        "Missing Values:\n"
-        f"{results['missing_values']}\n\n"
-        "Number of unique values in each column:\n"
-        f"{results['n_unique']}\n\n"
-        "Number of duplicated rows:\n"
-        f"{results['n_duplicates']}\n\n"
-        "Correlation Analysis:\n"
-        f"{results['corr']}\n\n"
-    )
-    prompt = message + (
-        "Give a short description about the given dataset. Also provide a brief yet detailed description of the given statistical analysis. Output in valid markdown format."
-    )
+    prompt = f"""\
+    You are given a file: {dataset_file}
+
+    Features:
+    {columns_info}
+
+    Here are a few samples:
+    {results['first_5']}
+
+    Summary Statistics:
+    {results['summary_stats']}
+
+    Missing Values:
+    {results['missing_values']}
+
+    Number of unique values in each column:
+    {results['n_unique']}
+
+    Number of duplicated rows:
+    {results['n_duplicates']}
+
+    Correlation Analysis:
+    {results['corr']}
+
+    Give a short description about the given dataset. Also provide a brief yet detailed description of the given statistical analysis. 
+    
+    Output in valid markdown format.
+    """
 
     print(prompt)
     response = chat(prompt=prompt, api_key=api_key)
@@ -469,12 +547,21 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
     responses = []
     for (func, res) in results.items():
         if res:
-            message = (
-                f"Analysis Function: {func}\n\n"
-                "Results:\n"
-                f"{res}"
-            )
-            prompt = message + f"The given analysis was performed on {dataset_file}. What are some of the findings of this analysis? Provide a description about the insights you discovered. Try to infer insighs from the results of the analysis and give a reason why this type of analysis was performed. Output in valid markdown format."
+            prompt = f"""\
+            Analysis Function: {func}
+
+            Results:
+            {res}
+
+            The given analysis was performed on {dataset_file}.
+            What are some of the findings of this analysis?
+
+            * Write about the analysis that was performed.
+            * Try to infer insights from the results of the analysis.
+            * Provide a description about the insights you discovered.
+
+            Output in valid markdown format.
+            """
 
         print(prompt)
         response = chat(prompt=prompt, api_key=api_key)
