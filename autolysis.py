@@ -80,41 +80,12 @@ def generic_analysis(data):
     return results
 
 
-# def write_generic_analysis_md(md_file, results):
-#     with open(md_file, "w") as f:
-#         f.write("## Generic Data Analysis\n\n")
-        
-#         f.write("### First 5 Rows\n\n")
-#         f.write(results['first_5'].to_markdown(index=False) + "\n\n")
-        
-#         f.write("### Dataset Info\n\n")
-#         f.write("```\n" + results['basic_info'] + "\n```\n\n")
-        
-#         f.write("### Summary Statistics\n\n")
-#         f.write(results['summary_stats'].to_markdown() + "\n\n")
-        
-#         f.write("### Missing Values\n\n")
-#         f.write(results['missing_values'].to_markdown() + "\n\n")
-        
-#         f.write("### Column Data Types\n\n")
-#         f.write(results['column_data_types'].to_markdown() + "\n\n")
-        
-#         f.write("### Unique Values in Each Column\n\n")
-#         f.write(results['n_unique'].to_markdown() + "\n\n")
-        
-#         f.write("### Correlation Matrix\n\n")
-#         f.write(results['corr'].to_markdown() + "\n\n")
-        
-#         f.write("### Duplicated Rows\n\n")
-#         f.write(f"Number of duplicated rows: {results['n_duplicates']}\n\n")
-
-#     print(f"Analysis written to {md_file}")
-
 def write_file(file_name, text_content, title):
     with open(file_name, "a") as f:
         if title:
             f.write("# " + title + "\n\n")
         f.write(text_content)
+        f.write('\n\n')
 
 
 def text_embedding(query, api_key, model='text-embedding-3-small'):
@@ -152,6 +123,11 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
         ]
     }
     response = requests.post(url, headers=headers, json=data)
+
+    if response.get('error', None):
+        print('LLM Error:\n', response)
+        return None
+    
     return response.json()
 
 
@@ -173,6 +149,11 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
         'function_call': 'auto'
     }
     response = requests.post(url, headers=headers, json=data)
+
+    if response.get('error', None):
+        print('LLM Error:\n', response)
+        return None
+    
     return response.json()
 
 
@@ -223,7 +204,6 @@ def filter_features(data, features):
 def extract_features_and_target(data, features, target):
     return data[features], data[target]
 
-function_description = []
 
 # Non-generic Analysis
 from sklearn.pipeline import Pipeline
@@ -236,9 +216,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 
 
-def outlier_detection(dataset_file, data, api_key, columns):
-    df = data[columns]
-    df = df.select_dtypes(include=['number'])
+def outlier_detection(dataset_file, data, api_key):
+    df = data.select_dtypes(include=['number'])
 
     if df.empty:
         print("\nNo numeric columns found.")
@@ -254,26 +233,34 @@ def outlier_detection(dataset_file, data, api_key, columns):
     isolation_forest.fit(df_tr)
 
     anomaly_score = isolation_forest.predict(df_tr)
-    return (anomaly_score == -1).sum()
+    return { 'n_anomalies': (anomaly_score == -1).sum() }
 
+
+# TODO: Add classification_analysis
 
 def regression_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     message = f'You are given a file {dataset_file}.\n\nWith features:\n\n{columns_info}\n\nHere is a sample:\n\n{data.iloc[0, :]}'
     
-    response = chat_function_call(prompt=message + "\n\nExtract the features and target for Regression task.", api_key=api_key, function_descriptions=filter_function_description)
+    response = chat_function_call(prompt=message + "\n\nExtract the features and target for Regression task. Make sure to NOT include the target variable in the features list.", api_key=api_key, function_descriptions=filter_function_description)
 
     if response.get('error', None):
-        exit()
+        return None
 
     # print(response)
 
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
     
-    X, y = chosen_func(data=data, **params)
+    if 'target' not in params.keys():
+        return None
+    
+    # print('Regression Analysis')
+    params['features'] = list(filter(lambda feature: feature != params['target'], params['features']))
 
-    # TODO
+    # print(params)
+
+    X, y = chosen_func(data=data, **params)
     X = X.select_dtypes(include=['number'])
 
     if X.empty:
@@ -300,7 +287,11 @@ def regression_analysis(dataset_file, data, api_key):
         'r2_score': r2_score,
         'mae': mae,
         'mse': mse,
-        'rmse': rmse
+        'rmse': rmse,
+        'coefficient': pipe['regression'].coef_,
+        'intercept': pipe['regression'].intercept_,
+        'feature_names_input': list(X.columns),
+        'target_name': y.name
     }
 
 
@@ -317,6 +308,8 @@ def correlation_analysis(dataset_file, data, api_key):
     
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+
+    print(params)
     
     df = chosen_func(data=data, **params)
     numeric_data = df.select_dtypes(include=['number'])
@@ -325,7 +318,7 @@ def correlation_analysis(dataset_file, data, api_key):
         print("\nNo numeric columns found. Cannot compute correlation matrix.")
         return None
     else:
-        return numeric_data.corr()
+        return { 'correlation_matrix': numeric_data.corr() }
 
 
 def cluster_analysis(dataset_file, data, api_key):
@@ -335,12 +328,15 @@ def cluster_analysis(dataset_file, data, api_key):
     response = chat_function_call(prompt=message + "\n\nExtract only the most important features to perform a Clustering analysis using K-Means. (Use filter_features)", api_key=api_key, function_descriptions=filter_function_description)
 
     if response.get('error', None):
-        exit()
+        print('LLM Error:\n', response)
+        return None
 
     # print(response)
     
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+
+    print(params)
     
     df = chosen_func(data=data, **params)
 
@@ -371,13 +367,17 @@ def geographic_analysis(dataset_file, data, api_key):
 def network_analysis():
     pass
 
+# TODO: Time Series Analysis
+def time_series_analysis():
+    pass
+
 
 def choose_analysis(dataset_file, data, api_key, analyses):
     results = {}
     for analysis in analyses:
         func = eval(analysis)
         res = func(dataset_file, data, api_key)
-        if res:
+        if res != None:
             results[analysis] = res
     
     return results
@@ -424,18 +424,15 @@ def meta_analysis(dataset_file, data, api_key):
     )
     response = chat_function_call(prompt=prompt, api_key=api_key, 
                                   function_descriptions=analysis_function_descriptions)
-    print(response)
+    # print(response)
 
     params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
     choose_analysis_func = eval(response['choices'][0]['message']['function_call']['name'])
 
-    analysis_results = choose_analysis_func(**params)
+    print(params)
 
-    # TODO: Use LLM to generate a descriptive summary of the results.
-    for analysis_func, analysis_res in analysis_results:
-        pass
-
-    return None
+    analysis_results = choose_analysis_func(dataset_file, data, api_key, **params)
+    return analysis_results
 
 
 def describe_generic_analysis(results, dataset_file, data, api_key):
@@ -467,6 +464,24 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     return response['choices'][0]['message']['content']
 
 
+# TODO: Describe the insights that were gained by this previous analysis.
+def describe_meta_analysis(results, dataset_file, data, api_key):
+    responses = []
+    for (func, res) in results.items():
+        if res:
+            message = (
+                f"Analysis Function: {func}\n\n"
+                "Results:\n"
+                f"{res}"
+            )
+            prompt = message + f"The given analysis was performed on {dataset_file}. What are some of the findings of this analysis? Provide a description about the insights you discovered. Try to infer insighs from the results of the analysis and give a reason why this type of analysis was performed. Output in valid markdown format."
+
+        print(prompt)
+        response = chat(prompt=prompt, api_key=api_key)
+        responses.append(response['choices'][0]['message']['content'])
+    
+    return responses
+
 def main():
     api_key = load_env_key()
     dataset_file = get_dataset()
@@ -480,29 +495,32 @@ def main():
 
     df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
 
-    generic_analysis_results = generic_analysis(data=df)
-
     # TESTING
-    # n_outliers = outlier_detection(dataset_file, df, api_key, df.columns)
+    # n_outliers = outlier_detection(dataset_file, df, api_key)
     # print(f'# outliers: {n_outliers} out of {df.shape[0]}')
 
     # reg_results = regression_analysis(dataset_file, df, api_key)
+    # print(reg_results)
 
     # corr_result = correlation_analysis(dataset_file, df, api_key)
     # print(corr_result)
 
     # cluster_analysis(dataset_file, df, api_key)
 
+    # ANALYSIS
     # Describe the given dataset.
+    generic_analysis_results = generic_analysis(data=df)
     generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
     write_file('README.md', generated_description)
 
     # Perform non-generic analysis.
-    # meta_analysis_results = meta_analysis(dataset_file, df, api_key)
-    # generated_analysis_description =  None
-    # write_file('README.md', generated_analysis_description, title='Advanced Data Analysis')
+    meta_analysis_results = meta_analysis(dataset_file, df, api_key)
+    print(meta_analysis_results)
 
-    # TODO: Describe the insights that were gained by this previous analysis.
+    generated_meta_analysis_descriptions =  describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
+    for meta_analysis_description in generated_meta_analysis_descriptions:
+        write_file('README.md', meta_analysis_description)
+
     # TODO: Describe the implications of your findings. (What to do with the insights?)
 
 
