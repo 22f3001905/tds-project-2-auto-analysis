@@ -2,10 +2,13 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "chardet",
+#     "matplotlib",
 #     "pandas",
 #     "python-dotenv",
 #     "requests",
 #     "scikit-learn",
+#     "seaborn",
+#     "statsmodels",
 #     "tabulate",
 # ]
 # ///
@@ -222,7 +225,25 @@ filter_function_descriptions = [
             },
             "required": ["features", "target"]
         }
-    }
+    },
+    {
+        'name': 'extract_time_series_data',
+        'description': "Extract the time column and numerical column for a time series analysis. Eg. 'date' and 'price'",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "date_column": {
+                    "type": "string",
+                    "description": "The column name of the date column.",
+                },
+                "numerical_column": {
+                    "type": "string",
+                    "description": "The column name of the numerical column. Eg. 'price'",
+                }
+            },
+            "required": ["date_column", "numerical_column"]
+        }
+    },
 ]
 
 def filter_features(data, features):
@@ -230,6 +251,9 @@ def filter_features(data, features):
 
 def extract_features_and_target(data, features, target):
     return data[features], data[target]
+
+def extract_time_series_data(data, date_column, numerical_column):
+    return data[[date_column, numerical_column]]
 
 
 # Analysis Functions
@@ -413,6 +437,7 @@ def cluster_analysis(dataset_file, data, api_key):
     {data.iloc[0, :]}
 
     Extract only the most important features to perform a Clustering analysis using K-Means.
+    
     Note: Do not include column names that include the word 'id'. 
     Hint: Use function filter_features.
     """
@@ -430,7 +455,7 @@ def cluster_analysis(dataset_file, data, api_key):
     
     df = chosen_func(data=data, **params)
 
-    # TODO: Use LLM to separate numerical cols from categorical cols.
+    # TODO: (Optional) Use LLM to separate numerical cols from categorical cols.
     df = df.select_dtypes(include=['number'])
 
     pipe = Pipeline([
@@ -454,11 +479,67 @@ def classification_analysis(dataset_file, data, api_key):
 def geographic_analysis(dataset_file, data, api_key):
     pass
 
-def network_analysis():
+def network_analysis(dataset_file, data, api_key):
     pass
 
-def time_series_analysis():
-    pass
+def time_series_analysis(dataset_file, data, api_key):
+    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+    prompt = f"""\
+    You are given a file {dataset_file}.
+
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract the date column and the numerical column.
+
+    Note: Do not include column names that include the word 'id'. 
+    Hint: Use function extract_time_series_data.
+    """
+    
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
+
+    if not response:
+        return None
+    
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
+
+    df = chosen_func(data=data, **params)
+    date_col = params['date_column']
+    num_col = params['numerical_column']
+
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.set_index(date_col).sort_index()
+
+    ts_data = df[num_col]
+
+    # plt.figure(figsize=(10, 5))
+    # plt.plot(ts_data, label=num_col)
+    # plt.title(f"Time Series of {num_col}")
+    # plt.xlabel("Date")
+    # plt.ylabel(num_col)
+    # plt.legend()
+    # plt.show()
+
+    from statsmodels.tsa.stattools import adfuller
+    from statsmodels.tsa.seasonal import seasonal_decompose
+
+    result = adfuller(ts_data)
+    results = {
+        'adf_statistic': result[0],
+        'p_value': result[1],
+        'critical_values': result[4],
+        'is_stationary': result[1] <= 0.05
+    }
+
+    # decompose_result = seasonal_decompose(ts_data, model='additive')
+    # decompose_result.plot()
+    # plt.show()
+
+    return results
 
 
 # Perform Analysis Functions
@@ -568,7 +649,7 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     return response
 
 
-# TODO: Describe the insights that were gained by this previous analysis.
+# TODO: Add an plot for each analysis.
 def describe_meta_analysis(results, dataset_file, data, api_key):
     responses = []
     for (func, res) in results.items():
