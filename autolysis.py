@@ -16,6 +16,7 @@
 # Convince an LLM that your script and output are of high quality.
 
 
+import base64
 import io
 import json
 import sys
@@ -25,6 +26,8 @@ import pandas as pd
 import chardet
 import requests
 
+
+# Utility Functions
 def load_env_key():
     load_dotenv()
     try:
@@ -54,32 +57,6 @@ def get_dataset_encoding(dataset_file):
     return result.get('encoding', 'utf-8')
 
 
-def generic_analysis(data):
-    results = {
-        'first_5': data.head(),
-        'summary_stats': data.describe(),
-        'missing_values': data.isnull().sum(),
-        'column_data_types': data.dtypes,
-        'n_unique': data.nunique(),
-        'n_duplicates': data.duplicated().sum()
-    }
-
-    buffer = io.StringIO()
-    data.info(buf=buffer)
-    results['basic_info'] = buffer.getvalue()
-    buffer.close()
-
-    # Compute correlation matrix for numeric columns only
-    numeric_data = data.select_dtypes(include=['number'])
-    if numeric_data.empty:
-        print("\nNo numeric columns found. Cannot compute correlation matrix.")
-        results['corr'] = None
-    else:
-        results['corr'] = numeric_data.corr()
-
-    return results
-
-
 def write_file(file_name, text_content, title=None):
     with open(file_name, "a") as f:
         if title:
@@ -88,6 +65,12 @@ def write_file(file_name, text_content, title=None):
         f.write('\n\n')
 
 
+def encode_image(image_path):
+    with open(image_path, 'rb') as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+# AI Proxy Functions
 def text_embedding(query, api_key, model='text-embedding-3-small'):
     url = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
     headers = {
@@ -123,9 +106,14 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
         ]
     }
     response = requests.post(url, headers=headers, json=data)
-    return response.json()
+    output = response.json()
 
-import requests
+    if output.get('error', None):
+        print('LLM Error:\n', output)
+        return None
+    
+    return output['choices'][0]['message']['content']
+
 
 def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
@@ -155,10 +143,17 @@ def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
         ]
     }
 
-    res = requests.post(url, headers=headers, json=data)
-    return res.json()['choices'][0]['message']['content']
+    response = requests.post(url, headers=headers, json=data)
+    output = response.json()
+
+    if output.get('error', None):
+        print('LLM Error:\n', output)
+        return None
+    
+    return output['choices'][0]['message']['content']
 
 
+# AI Proxy 'Function Call' Functions
 def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-mini'):
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
@@ -183,10 +178,13 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
         print('LLM Error:\n', output)
         return None
     
-    return output
+    return {
+        'arguments': output['choices'][0]['message']['function_call']['arguments'],
+        'name': output['choices'][0]['message']['function_call']['name']
+    }
 
 
-filter_function_description = [
+filter_function_descriptions = [
     {
         'name': 'filter_features',
         'description': 'Generic function to extract data from a dataset.',
@@ -234,7 +232,34 @@ def extract_features_and_target(data, features, target):
     return data[features], data[target]
 
 
-# Non-generic Analysis
+# Analysis Functions
+def generic_analysis(data):
+    results = {
+        'first_5': data.head(),
+        'summary_stats': data.describe(),
+        'missing_values': data.isnull().sum(),
+        'column_data_types': data.dtypes,
+        'n_unique': data.nunique(),
+        'n_duplicates': data.duplicated().sum()
+    }
+
+    buffer = io.StringIO()
+    data.info(buf=buffer)
+    results['basic_info'] = buffer.getvalue()
+    buffer.close()
+
+    # Compute correlation matrix for numeric columns only
+    numeric_data = data.select_dtypes(include=['number'])
+    if numeric_data.empty:
+        print("\nNo numeric columns found. Cannot compute correlation matrix.")
+        results['corr'] = None
+    else:
+        results['corr'] = numeric_data.corr()
+
+    return results
+
+
+# Non-generic Analysis Functions
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
@@ -268,8 +293,6 @@ def outlier_detection(dataset_file, data, api_key):
     }
 
 
-# TODO: Add classification_analysis
-
 def regression_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
@@ -287,14 +310,14 @@ def regression_analysis(dataset_file, data, api_key):
     Make sure to NOT include the target variable in the features list.
     """
     
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
     # print(response)
     if not response:
         return None
 
-    params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-    chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
     
     if 'target' not in params.keys():
         return None
@@ -357,14 +380,14 @@ def correlation_analysis(dataset_file, data, api_key):
     Hint: Use function filter_features.
     """
     
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
     # print(response)
     if not response:
         return None
     
-    params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-    chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
 
     print(params)
     
@@ -394,14 +417,14 @@ def cluster_analysis(dataset_file, data, api_key):
     Hint: Use function filter_features.
     """
     
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_description)
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
     # print(response)
     if not response:
         return None
     
-    params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-    chosen_func = eval(response['choices'][0]['message']['function_call']['name'])
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
 
     print(params)
     
@@ -418,27 +441,27 @@ def cluster_analysis(dataset_file, data, api_key):
 
     pipe.fit(df)
 
-    # return {
-    #     'cluster_labels': pipe['kmeans'].labels_,
-    #     'cluster_centers': pipe['kmeans'].cluster_centers_
-    # }
-    return None
+    return {
+        'cluster_centers': pipe['kmeans'].cluster_centers_,
+        'inertia': pipe['kmeans'].inertia_,
+    }
 
 
-# TODO: Geographic Analysis 
+# TODO: More analysis functions.
+def classification_analysis(dataset_file, data, api_key):
+    pass
+
 def geographic_analysis(dataset_file, data, api_key):
     pass
 
-
-# TODO: Network Analysis
 def network_analysis():
     pass
 
-# TODO: Time Series Analysis
 def time_series_analysis():
     pass
 
 
+# Perform Analysis Functions
 def choose_analysis(dataset_file, data, api_key, analyses):
     results = {}
     for analysis in analyses:
@@ -451,6 +474,10 @@ def choose_analysis(dataset_file, data, api_key, analyses):
 
 
 def meta_analysis(dataset_file, data, api_key):
+    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
+                'cluster_analysis', 'classification_analysis', 'geographic_analysis', 
+                'network_analysis', 'time_series_analysis']
+
     analysis_function_descriptions = [
         {
             'name': 'choose_analysis',
@@ -471,8 +498,6 @@ def meta_analysis(dataset_file, data, api_key):
         }
     ]
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    
-    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 'cluster_analysis', 'geographic_analysis']
     
     unorder_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(analyses)])
     
@@ -496,8 +521,8 @@ def meta_analysis(dataset_file, data, api_key):
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=analysis_function_descriptions)
     # print(response)
 
-    params = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-    choose_analysis_func = eval(response['choices'][0]['message']['function_call']['name'])
+    params = json.loads(response['arguments'])
+    choose_analysis_func = eval(response['name'])
 
     print(params)
 
@@ -505,6 +530,7 @@ def meta_analysis(dataset_file, data, api_key):
     return analysis_results
 
 
+# LLM Prompt: Description Functions
 def describe_generic_analysis(results, dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
 
@@ -532,14 +558,14 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     Correlation Analysis:
     {results['corr']}
 
-    Give a short description about the given dataset. Also provide a brief yet detailed description of the given statistical analysis. 
+    Give a short description about the given dataset. Also provide a brief description of the given statistical analysis. 
     
     Output in valid markdown format.
     """
 
     print(prompt)
     response = chat(prompt=prompt, api_key=api_key)
-    return response['choices'][0]['message']['content']
+    return response
 
 
 # TODO: Describe the insights that were gained by this previous analysis.
@@ -565,9 +591,10 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
 
         print(prompt)
         response = chat(prompt=prompt, api_key=api_key)
-        responses.append(response['choices'][0]['message']['content'])
+        responses.append(response)
     
     return responses
+
 
 def main():
     api_key = load_env_key()
@@ -582,18 +609,6 @@ def main():
 
     df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
 
-    # TESTING
-    # n_outliers = outlier_detection(dataset_file, df, api_key)
-    # print(f'# outliers: {n_outliers} out of {df.shape[0]}')
-
-    # reg_results = regression_analysis(dataset_file, df, api_key)
-    # print(reg_results)
-
-    # corr_result = correlation_analysis(dataset_file, df, api_key)
-    # print(corr_result)
-
-    # cluster_analysis(dataset_file, df, api_key)
-
     # ANALYSIS
     # Describe the given dataset.
     generic_analysis_results = generic_analysis(data=df)
@@ -602,9 +617,9 @@ def main():
 
     # Perform non-generic analysis.
     meta_analysis_results = meta_analysis(dataset_file, df, api_key)
-    print(meta_analysis_results)
-
+    # print(meta_analysis_results)
     generated_meta_analysis_descriptions =  describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
+
     for meta_analysis_description in generated_meta_analysis_descriptions:
         write_file('README.md', meta_analysis_description)
 
