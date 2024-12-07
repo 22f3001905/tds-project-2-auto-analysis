@@ -29,6 +29,9 @@ import pandas as pd
 import chardet
 import requests
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 
 # Utility Functions
 def load_env_key():
@@ -71,6 +74,14 @@ def write_file(file_name, text_content, title=None):
 def encode_image(image_path):
     with open(image_path, 'rb') as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+def name_chart_file():
+    cwd = os.getcwd()
+    png_files = [file for file in os.listdir(cwd) if file.endswith(".png")]
+    count = len(png_files)
+
+    return f'chart_{count + 1}.png'
 
 
 # AI Proxy Functions
@@ -246,11 +257,14 @@ filter_function_descriptions = [
     },
 ]
 
+
 def filter_features(data, features):
     return data[features]
 
+
 def extract_features_and_target(data, features, target):
     return data[features], data[target]
+
 
 def extract_time_series_data(data, date_column, numerical_column):
     return data[[date_column, numerical_column]]
@@ -374,6 +388,8 @@ def regression_analysis(dataset_file, data, api_key):
     mse = mean_squared_error(y_test, y_pred)
     rmse = mse ** 0.5
 
+    chart_name = plot_regression(y_test, y_pred)
+
     return {
         'r2_score': r2_score,
         'mae': mae,
@@ -382,7 +398,8 @@ def regression_analysis(dataset_file, data, api_key):
         'coefficient': pipe['regression'].coef_,
         'intercept': pipe['regression'].intercept_,
         'feature_names_input': list(X.columns),
-        'target_name': y.name
+        'target_name': y.name,
+        'chart': chart_name
     }
 
 
@@ -421,8 +438,14 @@ def correlation_analysis(dataset_file, data, api_key):
     if numeric_data.empty:
         print("\nNo numeric columns found. Cannot compute correlation matrix.")
         return None
-    else:
-        return { 'correlation_matrix': numeric_data.corr() }
+    
+    corr = numeric_data.corr()
+    chart_name = plot_correlation(corr)
+
+    return {
+        'correlation_matrix': corr,
+        'chart': chart_name
+    }
 
 
 def cluster_analysis(dataset_file, data, api_key):
@@ -476,11 +499,14 @@ def cluster_analysis(dataset_file, data, api_key):
 def classification_analysis(dataset_file, data, api_key):
     pass
 
+
 def geographic_analysis(dataset_file, data, api_key):
     pass
 
+
 def network_analysis(dataset_file, data, api_key):
     pass
+
 
 def time_series_analysis(dataset_file, data, api_key):
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
@@ -516,30 +542,80 @@ def time_series_analysis(dataset_file, data, api_key):
 
     ts_data = df[num_col]
 
-    # plt.figure(figsize=(10, 5))
-    # plt.plot(ts_data, label=num_col)
-    # plt.title(f"Time Series of {num_col}")
-    # plt.xlabel("Date")
-    # plt.ylabel(num_col)
-    # plt.legend()
-    # plt.show()
-
     from statsmodels.tsa.stattools import adfuller
     from statsmodels.tsa.seasonal import seasonal_decompose
 
     result = adfuller(ts_data)
-    results = {
-        'adf_statistic': result[0],
-        'p_value': result[1],
-        'critical_values': result[4],
-        'is_stationary': result[1] <= 0.05
-    }
 
     # decompose_result = seasonal_decompose(ts_data, model='additive')
     # decompose_result.plot()
     # plt.show()
 
-    return results
+    chart_name = plot_time_series(ts_data, num_col)
+
+    return {
+        'adf_statistic': result[0],
+        'p_value': result[1],
+        'critical_values': result[4],
+        'is_stationary': result[1] <= 0.05,
+        'chart': chart_name
+    }
+
+
+# Plotting Functions
+def plot_time_series(ts_data, num_col):
+    dpi = 100
+    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+    
+    plt.plot(ts_data, label=num_col)
+    plt.title(f"Time Series of {num_col}")
+    plt.xlabel("Date")
+    plt.ylabel(num_col)
+    plt.legend()
+    plt.show()
+
+    chart_name = name_chart_file()
+    
+    plt.savefig(f"{chart_name}.png")
+    plt.close()
+
+    return chart_name
+
+
+def plot_regression(y_true, y_pred):
+    dpi = 100
+    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+
+    plt.scatter(y_true, y_pred, alpha=0.8)
+    plt.plot(y_true, y_true, 'r-', label='y = x')
+    plt.xlabel('Actual')
+    plt.ylabel('Predicted')
+    plt.title('Actual vs Predicted')
+    plt.legend()
+    plt.show()
+
+    chart_name = name_chart_file()
+
+    plt.savefig(f"{chart_name}.png")
+    plt.close()
+
+    return chart_name
+
+
+def plot_correlation(corr):
+    dpi = 100
+    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+
+    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+    plt.title('Correlation Heatmap')
+    plt.show()
+
+    chart_name = name_chart_file()
+
+    plt.savefig(f"{chart_name}.png")
+    plt.close()
+
+    return chart_name
 
 
 # Perform Analysis Functions
@@ -678,6 +754,7 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
 
 
 def main():
+    sns.set_theme('notebook')
     api_key = load_env_key()
     dataset_file = get_dataset()
     encoding = get_dataset_encoding(dataset_file)
