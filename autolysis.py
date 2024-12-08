@@ -67,6 +67,10 @@ def write_file(file_name, text_content, title=None):
     with open(file_name, "a") as f:
         if title:
             f.write("# " + title + "\n\n")
+        
+        if text_content.startswith("```markdown"):
+            text_content = text_content.replace("```markdown", "", 1).strip().rstrip("```").strip()
+
         f.write(text_content)
         f.write('\n\n')
 
@@ -81,7 +85,7 @@ def name_chart_file():
     png_files = [file for file in os.listdir(cwd) if file.endswith(".png")]
     count = len(png_files)
 
-    return f'chart_{count + 1}.png'
+    return f'chart_{count + 1}'
 
 
 # AI Proxy Functions
@@ -126,6 +130,9 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
         print('LLM Error:\n', output)
         return None
     
+    print(f"Monthly Cost: {output['monthlyCost']}")
+    # print(f"Cost: {output['cost']}")
+    
     return output['choices'][0]['message']['content']
 
 
@@ -164,6 +171,8 @@ def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
         print('LLM Error:\n', output)
         return None
     
+    print(f"Monthly Cost: {output['monthlyCost']}")
+    
     return output['choices'][0]['message']['content']
 
 
@@ -191,6 +200,8 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
     if output.get('error', None):
         print('LLM Error:\n', output)
         return None
+    
+    print(f"Monthly Cost: {output['monthlyCost']}")
     
     return {
         'arguments': output['choices'][0]['message']['function_call']['arguments'],
@@ -350,7 +361,7 @@ def regression_analysis(dataset_file, data, api_key):
     
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
-    # print(response)
+    print(response)
     if not response:
         return None
 
@@ -572,14 +583,14 @@ def plot_time_series(ts_data, num_col):
     plt.xlabel("Date")
     plt.ylabel(num_col)
     plt.legend()
-    plt.show()
 
     chart_name = name_chart_file()
     
     plt.savefig(f"{chart_name}.png")
+    plt.show()
     plt.close()
 
-    return chart_name
+    return f"{chart_name}.png"
 
 
 def plot_regression(y_true, y_pred):
@@ -592,30 +603,32 @@ def plot_regression(y_true, y_pred):
     plt.ylabel('Predicted')
     plt.title('Actual vs Predicted')
     plt.legend()
-    plt.show()
 
     chart_name = name_chart_file()
 
     plt.savefig(f"{chart_name}.png")
+    plt.show()
     plt.close()
 
-    return chart_name
+    return f"{chart_name}.png"
 
 
 def plot_correlation(corr):
     dpi = 100
+    # n_cols = len(corr.columns)
+    # plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
     plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
-    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+    sns.heatmap(corr, annot=True, cmap='RdYlGn', fmt=".2f")
     plt.title('Correlation Heatmap')
-    plt.show()
 
     chart_name = name_chart_file()
 
-    plt.savefig(f"{chart_name}.png")
+    plt.savefig(f"{chart_name}.png", dpi=dpi)
+    plt.show()
     plt.close()
 
-    return chart_name
+    return f"{chart_name}.png"
 
 
 # Perform Analysis Functions
@@ -631,6 +644,7 @@ def choose_analysis(dataset_file, data, api_key, analyses):
 
 
 def meta_analysis(dataset_file, data, api_key):
+    # TODO: Fix this!
     analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
                 'cluster_analysis', 'classification_analysis', 'geographic_analysis', 
                 'network_analysis', 'time_series_analysis']
@@ -745,10 +759,23 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
 
             Output in valid markdown format.
             """
+        
+            img_path = res.get('chart', None)
+            if img_path:
+                chart_base64 = encode_image(img_path)
+                image_analysis = image_info(chart_base64, prompt="Here is a chart displaying some information. Provide a brief analysis and infer insights from the chart.", api_key=api_key)
 
-        print(prompt)
-        response = chat(prompt=prompt, api_key=api_key)
-        responses.append(response)
+                prompt += f"""
+                Additional: Add the chart image which is a .png file with its analysis to the markdown output.
+                Chart Analysis:
+                {image_analysis}
+
+                Output in valid markdown format.
+                """
+
+            print(prompt)
+            response = chat(prompt=prompt, api_key=api_key)
+            responses.append(response)
     
     return responses
 
@@ -776,7 +803,7 @@ def main():
     # Perform non-generic analysis.
     meta_analysis_results = meta_analysis(dataset_file, df, api_key)
     # print(meta_analysis_results)
-    generated_meta_analysis_descriptions =  describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
+    generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
 
     for meta_analysis_description in generated_meta_analysis_descriptions:
         write_file('README.md', meta_analysis_description)
