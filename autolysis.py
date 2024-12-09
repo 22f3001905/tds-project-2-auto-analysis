@@ -229,7 +229,7 @@ filter_function_descriptions = [
     },
     {
         'name': 'extract_features_and_target',
-        'description': 'Extract a feature matrix and a target vector for training a regression model. Call this when you need to get X and y for a Regression task.',
+        'description': 'Extract a feature matrix and a target vector for training a regression model. Call this when you need to get X and y for a Regression or Classification task.',
         "parameters": {
             "type": "object",
             "properties": {
@@ -317,7 +317,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
-
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix
 
 def outlier_detection(dataset_file, data, api_key):
     df = data.select_dtypes(include=['number'])
@@ -506,16 +507,74 @@ def cluster_analysis(dataset_file, data, api_key):
     }
 
 
-# TODO: More analysis functions.
 def classification_analysis(dataset_file, data, api_key):
-    pass
+    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+    prompt = f"""\
+    You are given a file {dataset_file}.
+
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract the features and target for Classification task.
+    Note: Do not include column names that include the word 'id'.
+
+    Make sure to NOT include the target variable in the features list.
+    Note: The target column should be categorical datatype.
+    """
+
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
+
+    print(response)
+    if not response:
+        return None
+
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
+    
+    if 'target' not in params.keys():
+        return None
+    
+    params['features'] = list(filter(lambda feature: feature != params['target'], params['features']))
+
+    X, y = chosen_func(data=data, **params)
+    X = X.select_dtypes(include=['number'])
+
+    if y.nunique() > 20:
+        print('\ny is not a valid target label.')
+        return None
+
+    if X.empty:
+        print("\nNo numeric columns found.")
+        return None
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    pipe = Pipeline([
+        ('imputer', SimpleImputer(strategy='mean')),
+        ('scaler', StandardScaler()),
+        ('log_clf', LogisticRegression(random_state=42))
+    ])
+
+    pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
+
+    con_mat = confusion_matrix(y_test, y_pred)
+    report = classification_report(y_test, y_pred)
+
+    chart_name = plot_classification(y_test, y_pred)
+
+    return {
+        'confusion_matrix': con_mat,
+        'classification_report': report,
+        'chart': chart_name
+    }
 
 
+# TODO: Add analysis function.
 def geographic_analysis(dataset_file, data, api_key):
-    pass
-
-
-def network_analysis(dataset_file, data, api_key):
     pass
 
 
@@ -613,11 +672,29 @@ def plot_regression(y_true, y_pred):
     return f"{chart_name}.png"
 
 
+from sklearn.metrics import ConfusionMatrixDisplay
+
+def plot_classification(y_true, y_pred):
+    dpi = 100
+    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+
+    ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
+    plt.grid(False)
+
+    chart_name = name_chart_file()
+
+    plt.savefig(f"{chart_name}.png")
+    plt.show()
+    plt.close()
+
+    return f"{chart_name}.png"
+
+
 def plot_correlation(corr):
     dpi = 100
-    # n_cols = len(corr.columns)
-    # plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
-    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+    n_cols = len(corr.columns)
+    plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
+    # plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
     sns.heatmap(corr, annot=True, cmap='RdYlGn', fmt=".2f")
     plt.title('Correlation Heatmap')
@@ -644,7 +721,6 @@ def choose_analysis(dataset_file, data, api_key, analyses):
 
 
 def meta_analysis(dataset_file, data, api_key):
-    # TODO: Fix this!
     analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
                 'cluster_analysis', 'classification_analysis', 'geographic_analysis', 
                 'network_analysis', 'time_series_analysis']
@@ -661,7 +737,7 @@ def meta_analysis(dataset_file, data, api_key):
                         "items": {
                             "type": "string"
                         },
-                        "description": "List of analysis to perform in order. Eg. ['Regression Analysis', 'Cluster Analysis']",
+                        "description": "List of analysis to perform in order. Eg. ['regression_analysis', 'time_series_analysis', 'outlier_detection']",
                     },
                 },
                 "required": ["indices"]
@@ -681,7 +757,7 @@ def meta_analysis(dataset_file, data, api_key):
     Here are a few samples:
     {data.iloc[:3, :]}
 
-    Perform only a few appropriate analyses. Make sure they are in correct order.
+    Note: Perform only the appropriate analyses.
 
     Analysis options:
     {unorder_list_analyses}
@@ -739,43 +815,51 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     return response
 
 
-# TODO: Add an plot for each analysis.
 def describe_meta_analysis(results, dataset_file, data, api_key):
     responses = []
     for (func, res) in results.items():
-        if res:
-            prompt = f"""\
-            Analysis Function: {func}
+        if not res:
+            continue
+        
+        prompt = f"""\
+        Analysis Function: {func}
 
-            Results:
-            {res}
+        Results:
+        {res}
 
-            The given analysis was performed on {dataset_file}.
-            What are some of the findings of this analysis?
+        The given analysis was performed on {dataset_file}.
+        What are some of the findings of this analysis?
 
-            * Write about the analysis that was performed.
-            * Try to infer insights from the results of the analysis.
-            * Provide a description about the insights you discovered.
+        * Write about the analysis that was performed.
+        * Try to infer insights from the results of the analysis.
+        * Provide a description about the insights you discovered.
+        * Give the implications of your findings.
+
+        Output in valid markdown format.
+        """
+    
+        img_path = res.get('chart', None)
+        if img_path:
+            chart_base64 = encode_image(img_path)
+            img_analysis_prompt = """\
+            Here is a chart to visualize some information in a .csv file. 
+            Analyze and infer insights from the chart, then summarize the findings.
+            """
+
+            image_analysis = image_info(chart_base64, prompt=img_analysis_prompt, api_key=api_key)
+
+            prompt += f"""
+            Additional: Add the chart image which is a .png file with its analysis to the markdown output.
+
+            Chart Analysis Summary:
+            {image_analysis}
 
             Output in valid markdown format.
             """
-        
-            img_path = res.get('chart', None)
-            if img_path:
-                chart_base64 = encode_image(img_path)
-                image_analysis = image_info(chart_base64, prompt="Here is a chart displaying some information. Provide a brief analysis and infer insights from the chart.", api_key=api_key)
 
-                prompt += f"""
-                Additional: Add the chart image which is a .png file with its analysis to the markdown output.
-                Chart Analysis:
-                {image_analysis}
-
-                Output in valid markdown format.
-                """
-
-            print(prompt)
-            response = chat(prompt=prompt, api_key=api_key)
-            responses.append(response)
+        print(prompt)
+        response = chat(prompt=prompt, api_key=api_key)
+        responses.append(response)
     
     return responses
 
@@ -800,15 +884,13 @@ def main():
     generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
     write_file('README.md', generated_description)
 
-    # Perform non-generic analysis.
+    # Consult LLM and perform analysis.
     meta_analysis_results = meta_analysis(dataset_file, df, api_key)
     # print(meta_analysis_results)
     generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
 
     for meta_analysis_description in generated_meta_analysis_descriptions:
         write_file('README.md', meta_analysis_description)
-
-    # TODO: Describe the implications of your findings. (What to do with the insights?)
 
 
 if __name__ == '__main__':
