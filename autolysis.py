@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import chardet
 import requests
+import logging
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -39,31 +40,43 @@ def load_env_key():
     try:
         api_key = os.environ["AIPROXY_TOKEN"]
     except KeyError:
-        print("Error: AIPROXY_TOKEN is not set in the environment.")
+        logging.critical("Error: AIPROXY_TOKEN is not set in the environment.")
         sys.exit(1)
     return api_key
 
 
 def get_dataset():
     if len(sys.argv) != 2:
-        print("Usage: python autolysis.py <dataset.csv>")
+        logging.error("Usage: python autolysis.py <dataset.csv>")
         sys.exit(1)
     return sys.argv[1]
 
 
 def get_dataset_encoding(dataset_file):
     if not os.path.isfile(dataset_file):
-        print(f"Error: File '{dataset_file}' not found.")
+        logging.critical(f"Error: File '{dataset_file}' not found.")
         sys.exit(1)
     
     with open(dataset_file, 'rb') as f:
         result = chardet.detect(f.read())
     
-    print(f'File Info: {result}')
+    logging.info(f'File Info: {result}')
     return result.get('encoding', 'utf-8')
 
 
+def read_csv_file(dataset_file, encoding):
+    try:
+        df = pd.read_csv(dataset_file, encoding=encoding)
+    except Exception as e:
+        logging.critical(f"Error reading the CSV file: {e}")
+        sys.exit(1)
+    
+    return df.dropna(axis=1, how='all').dropna(axis=0, how='all')
+
+
 def write_file(file_name, text_content, title=None):
+    logging.info(f'Writing: {file_name}')
+
     with open(file_name, "a") as f:
         if title:
             f.write("# " + title + "\n\n")
@@ -89,21 +102,6 @@ def name_chart_file():
 
 
 # AI Proxy Functions
-def text_embedding(query, api_key, model='text-embedding-3-small'):
-    url = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "input": query,
-        "model": model,
-        "encoding_format": "float"
-    }
-    response = requests.post(url, headers=headers, json=data)
-    return response.json()['data']
-
-
 def chat(prompt, api_key, model='gpt-4o-mini'):
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
@@ -127,12 +125,11 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
     output = response.json()
 
     if output.get('error', None):
-        print('LLM Error:\n', output)
+        logging.error('LLM Error:\n', output)
         return None
     
-    print(f"Monthly Cost: {output['monthlyCost']}")
-    # print(f"Cost: {output['cost']}")
-    
+    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
+
     return output['choices'][0]['message']['content']
 
 
@@ -168,10 +165,10 @@ def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
     output = response.json()
 
     if output.get('error', None):
-        print('LLM Error:\n', output)
+        logging.error('LLM Error:\n', output)
         return None
     
-    print(f"Monthly Cost: {output['monthlyCost']}")
+    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
     
     return output['choices'][0]['message']['content']
 
@@ -198,10 +195,10 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
     output = response.json()
 
     if output.get('error', None):
-        print('LLM Error:\n', output)
+        logging.error('LLM Error:\n', output)
         return None
     
-    print(f"Monthly Cost: {output['monthlyCost']}")
+    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
     
     return {
         'arguments': output['choices'][0]['message']['function_call']['arguments'],
@@ -283,6 +280,8 @@ def extract_time_series_data(data, date_column, numerical_column):
 
 # Analysis Functions
 def generic_analysis(data):
+    logging.info('Working: Generic Analysis')
+
     results = {
         'first_5': data.head(),
         'summary_stats': data.describe(),
@@ -300,7 +299,7 @@ def generic_analysis(data):
     # Compute correlation matrix for numeric columns only
     numeric_data = data.select_dtypes(include=['number'])
     if numeric_data.empty:
-        print("\nNo numeric columns found. Cannot compute correlation matrix.")
+        logging.warning("No numeric columns found.")
         results['corr'] = None
     else:
         results['corr'] = numeric_data.corr()
@@ -324,7 +323,7 @@ def outlier_detection(dataset_file, data, api_key):
     df = data.select_dtypes(include=['number'])
 
     if df.empty:
-        print("\nNo numeric columns found.")
+        logging.warning("No numeric columns found.")
         return None
     
     preprocessing = Pipeline([
@@ -333,10 +332,12 @@ def outlier_detection(dataset_file, data, api_key):
     ])
     isolation_forest = IsolationForest(contamination='auto', random_state=42)
 
+    logging.info('Running: Outlier Detection')
     df_tr = preprocessing.fit_transform(df)
     isolation_forest.fit(df_tr)
 
     anomaly_score = isolation_forest.predict(df_tr)
+
     return { 
         'n_anomalies': (anomaly_score == -1).sum(), 
         'n_samples': df_tr.shape[0]
@@ -362,7 +363,6 @@ def regression_analysis(dataset_file, data, api_key):
     
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
-    print(response)
     if not response:
         return None
 
@@ -372,16 +372,13 @@ def regression_analysis(dataset_file, data, api_key):
     if 'target' not in params.keys():
         return None
     
-    # print('Regression Analysis')
     params['features'] = list(filter(lambda feature: feature != params['target'], params['features']))
-
-    # print(params)
 
     X, y = chosen_func(data=data, **params)
     X = X.select_dtypes(include=['number'])
 
     if X.empty:
-        print("\nNo numeric columns found.")
+        logging.warning("No numeric columns found.")
         return None
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -391,6 +388,8 @@ def regression_analysis(dataset_file, data, api_key):
         ('scaler', StandardScaler()),
         ('regression', LinearRegression())
     ])
+
+    logging.info('Working: Linear Regression')
 
     pipe.fit(X_train, y_train)
     y_pred = pipe.predict(X_test)
@@ -435,20 +434,17 @@ def correlation_analysis(dataset_file, data, api_key):
     
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
-    # print(response)
     if not response:
         return None
     
     params = json.loads(response['arguments'])
     chosen_func = eval(response['name'])
 
-    print(params)
-    
     df = chosen_func(data=data, **params)
     numeric_data = df.select_dtypes(include=['number'])
 
     if numeric_data.empty:
-        print("\nNo numeric columns found. Cannot compute correlation matrix.")
+        logging.warning("No numeric columns found.")
         return None
     
     corr = numeric_data.corr()
@@ -479,15 +475,12 @@ def cluster_analysis(dataset_file, data, api_key):
     
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
-    # print(response)
     if not response:
         return None
     
     params = json.loads(response['arguments'])
     chosen_func = eval(response['name'])
 
-    print(params)
-    
     df = chosen_func(data=data, **params)
 
     # TODO: (Optional) Use LLM to separate numerical cols from categorical cols.
@@ -499,6 +492,7 @@ def cluster_analysis(dataset_file, data, api_key):
         ('kmeans', KMeans(n_clusters=4, random_state=42))
     ])
 
+    logging.info('Working: K-Means Clustering')
     pipe.fit(df)
 
     return {
@@ -527,7 +521,6 @@ def classification_analysis(dataset_file, data, api_key):
 
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
 
-    print(response)
     if not response:
         return None
 
@@ -543,11 +536,11 @@ def classification_analysis(dataset_file, data, api_key):
     X = X.select_dtypes(include=['number'])
 
     if y.nunique() > 20:
-        print('\ny is not a valid target label.')
+        logging.warning('y is not a valid target label.')
         return None
 
     if X.empty:
-        print("\nNo numeric columns found.")
+        logging.warning("No numeric columns found.")
         return None
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -557,6 +550,8 @@ def classification_analysis(dataset_file, data, api_key):
         ('scaler', StandardScaler()),
         ('log_clf', LogisticRegression(random_state=42))
     ])
+
+    logging.info('Working: Logistic Regression')
 
     pipe.fit(X_train, y_train)
     y_pred = pipe.predict(X_test)
@@ -611,17 +606,12 @@ def time_series_analysis(dataset_file, data, api_key):
     df = df.set_index(date_col).sort_index()
 
     ts_data = df[num_col]
+    chart_name = plot_time_series(ts_data, num_col)
 
     from statsmodels.tsa.stattools import adfuller
-    from statsmodels.tsa.seasonal import seasonal_decompose
 
+    logging.info('Working: Time-Series Analysis')
     result = adfuller(ts_data)
-
-    # decompose_result = seasonal_decompose(ts_data, model='additive')
-    # decompose_result.plot()
-    # plt.show()
-
-    chart_name = plot_time_series(ts_data, num_col)
 
     return {
         'adf_statistic': result[0],
@@ -646,7 +636,6 @@ def plot_time_series(ts_data, num_col):
     chart_name = name_chart_file()
     
     plt.savefig(f"{chart_name}.png")
-    plt.show()
     plt.close()
 
     return f"{chart_name}.png"
@@ -666,7 +655,6 @@ def plot_regression(y_true, y_pred):
     chart_name = name_chart_file()
 
     plt.savefig(f"{chart_name}.png")
-    plt.show()
     plt.close()
 
     return f"{chart_name}.png"
@@ -684,7 +672,6 @@ def plot_classification(y_true, y_pred):
     chart_name = name_chart_file()
 
     plt.savefig(f"{chart_name}.png")
-    plt.show()
     plt.close()
 
     return f"{chart_name}.png"
@@ -702,7 +689,6 @@ def plot_correlation(corr):
     chart_name = name_chart_file()
 
     plt.savefig(f"{chart_name}.png", dpi=dpi)
-    plt.show()
     plt.close()
 
     return f"{chart_name}.png"
@@ -713,7 +699,13 @@ def choose_analysis(dataset_file, data, api_key, analyses):
     results = {}
     for analysis in analyses:
         func = eval(analysis)
-        res = func(dataset_file, data, api_key)
+        
+        try:
+            res = func(dataset_file, data, api_key)
+        except:
+            logging.error(f'Error in {analysis} function.')
+            res = None
+
         if res != None:
             results[analysis] = res
     
@@ -746,7 +738,7 @@ def meta_analysis(dataset_file, data, api_key):
     ]
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     
-    unorder_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(analyses)])
+    order_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(analyses)])
     
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -760,18 +752,15 @@ def meta_analysis(dataset_file, data, api_key):
     Note: Perform only the appropriate analyses.
 
     Analysis options:
-    {unorder_list_analyses}
+    {order_list_analyses}
 
     Call the choose_analysis function with the correct options.
     """
 
     response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=analysis_function_descriptions)
-    # print(response)
 
     params = json.loads(response['arguments'])
     choose_analysis_func = eval(response['name'])
-
-    print(params)
 
     analysis_results = choose_analysis_func(dataset_file, data, api_key, **params)
     return analysis_results
@@ -810,7 +799,6 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     Output in valid markdown format.
     """
 
-    print(prompt)
     response = chat(prompt=prompt, api_key=api_key)
     return response
 
@@ -857,7 +845,6 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
             Output in valid markdown format.
             """
 
-        print(prompt)
         response = chat(prompt=prompt, api_key=api_key)
         responses.append(response)
     
@@ -865,18 +852,14 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
 
 
 def main():
+    # SETUP
     sns.set_theme('notebook')
+    logging.basicConfig(level=logging.INFO)
+
     api_key = load_env_key()
     dataset_file = get_dataset()
     encoding = get_dataset_encoding(dataset_file)
-
-    try:
-        df = pd.read_csv(dataset_file, encoding=encoding)
-    except Exception as e:
-        print(f"Error reading the CSV file: {e}")
-        sys.exit(1)
-
-    df = df.dropna(axis=1, how='all').dropna(axis=0, how='all')
+    df = read_csv_file(dataset_file, encoding)
 
     # ANALYSIS
     # Describe the given dataset.
@@ -886,7 +869,7 @@ def main():
 
     # Consult LLM and perform analysis.
     meta_analysis_results = meta_analysis(dataset_file, df, api_key)
-    # print(meta_analysis_results)
+    # logging.info(meta_analysis_results)
     generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
 
     for meta_analysis_description in generated_meta_analysis_descriptions:
