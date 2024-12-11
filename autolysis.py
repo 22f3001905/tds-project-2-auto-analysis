@@ -39,6 +39,7 @@ import seaborn as sns
 
 # Utility Functions
 def load_env_key():
+    """Load API key from environment variable."""
     load_dotenv()
     try:
         api_key = os.environ["AIPROXY_TOKEN"]
@@ -49,6 +50,7 @@ def load_env_key():
 
 
 def get_dataset():
+    """Retrieve dataset file path from command-line arguments."""
     if len(sys.argv) != 2:
         logging.error("Usage: python autolysis.py <dataset.csv>")
         sys.exit(1)
@@ -56,18 +58,24 @@ def get_dataset():
 
 
 def get_dataset_encoding(dataset_file):
+    """Determine the encoding of a dataset file."""
     if not os.path.isfile(dataset_file):
         logging.critical(f"Error: File '{dataset_file}' not found.")
         sys.exit(1)
     
-    with open(dataset_file, 'rb') as f:
-        result = chardet.detect(f.read())
+    try:
+        with open(dataset_file, 'rb') as file:
+            result = chardet.detect(file.read())
+    except Exception as e:
+        logging.critical(f"Error reading file '{dataset_file}': {e}")
+        sys.exit(1)
     
     logging.info(f'File Info: {result}')
     return result.get('encoding', 'utf-8')
 
 
 def read_csv_file(dataset_file, encoding):
+    """Read a CSV file and clean it by dropping empty rows and columns."""
     try:
         df = pd.read_csv(dataset_file, encoding=encoding)
     except Exception as e:
@@ -78,34 +86,53 @@ def read_csv_file(dataset_file, encoding):
 
 
 def write_file(file_name, text_content, title=None):
+    """Write text content to a file, optionally adding a title."""
     logging.info(f'Writing: {file_name}')
 
-    with open(file_name, "a") as f:
-        if title:
-            f.write("# " + title + "\n\n")
-        
-        if text_content.startswith("```markdown"):
-            text_content = text_content.replace("```markdown", "", 1).strip().rstrip("```").strip()
+    try:
+        with open(file_name, "a") as f:
+            if title:
+                f.write("# " + title + "\n\n")
 
-        f.write(text_content)
-        f.write('\n\n')
+            if text_content.startswith("```markdown"):
+                text_content = text_content.replace("```markdown", "", 1).strip().rstrip("```").strip()
+
+            f.write(text_content + "\n\n")
+    except Exception as e:
+        logging.error(f"Error writing to file '{file_name}': {e}")
 
 
 def encode_image(image_path):
+    """Encode an image to a Base64 string."""
     with open(image_path, 'rb') as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
+    
+    try:
+        with open(image_path, 'rb') as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+    except FileNotFoundError:
+        logging.error(f"Image file not found: {image_path}")
+        return ""
+    except IOError as e:
+        logging.error(f"Error reading image file '{image_path}': {e}")
+        return ""
 
 
 def name_chart_file():
-    cwd = os.getcwd()
-    png_files = [file for file in os.listdir(cwd) if file.endswith(".png")]
-    count = len(png_files)
-
-    return f'chart_{count + 1}'
+    """Generate a unique name for a chart file based on existing PNG files in the current directory."""
+    try:
+        cwd = os.getcwd()
+        png_files = [file for file in os.listdir(cwd) if file.endswith(".png")]
+        count = len(png_files)
+        return f'chart_{count + 1}'
+    except Exception as e:
+        logging.error(f"Error generating chart file name: {e}")
+        return "chart_unknown"
 
 
 # AI Proxy Functions
 def chat(prompt, api_key, model='gpt-4o-mini'):
+    """Send a chat prompt to the AI API and return the response."""
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
         'Content-Type': 'application/json',
@@ -124,19 +151,27 @@ def chat(prompt, api_key, model='gpt-4o-mini'):
             }
         ]
     }
-    response = requests.post(url, headers=headers, json=data)
-    output = response.json()
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        output = response.json()
 
-    if output.get('error', None):
-        logging.error('LLM Error:\n', output)
+        if output.get('error'):
+            logging.error(f"LLM Error: {output}")
+            return None
+
+        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
+        return output['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        logging.error(f"HTTP Request failed: {e}")
         return None
-    
-    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-
-    return output['choices'][0]['message']['content']
+    except KeyError as e:
+        logging.error(f"Unexpected response format: {e}")
+        return None
 
 
 def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
+    """Send an image and prompt to the AI API for information extraction."""
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
         'Content-Type': 'application/json',
@@ -163,21 +198,28 @@ def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
             }
         ]
     }
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        output = response.json()
 
-    response = requests.post(url, headers=headers, json=data)
-    output = response.json()
+        if output.get('error'):
+            logging.error(f"LLM Error: {output}")
+            return None
 
-    if output.get('error', None):
-        logging.error('LLM Error:\n', output)
+        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
+        return output['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        logging.error(f"HTTP Request failed: {e}")
         return None
-    
-    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-    
-    return output['choices'][0]['message']['content']
+    except KeyError as e:
+        logging.error(f"Unexpected response format: {e}")
+        return None
 
 
 # AI Proxy 'Function Call' Functions
 def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-mini'):
+    """Call an AI API for a function completion based on user input."""
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
         'Content-Type': 'application/json',
@@ -194,19 +236,27 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
         'functions': function_descriptions,
         'function_call': 'auto'
     }
-    response = requests.post(url, headers=headers, json=data)    
-    output = response.json()
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        output = response.json()
 
-    if output.get('error', None):
-        logging.error('LLM Error:\n', output)
+        if output.get('error'):
+            logging.error(f"LLM Error: {output}")
+            return None
+        
+        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
+        
+        return {
+            'arguments': output['choices'][0]['message']['function_call']['arguments'],
+            'name': output['choices'][0]['message']['function_call']['name']
+        }
+    except requests.exceptions.RequestException as e:
+        logging.error(f"HTTP Request failed: {e}")
         return None
-    
-    logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-    
-    return {
-        'arguments': output['choices'][0]['message']['function_call']['arguments'],
-        'name': output['choices'][0]['message']['function_call']['name']
-    }
+    except (KeyError, IndexError) as e:
+        logging.error(f"Unexpected response format: {e}")
+        return None
 
 
 filter_function_descriptions = [
@@ -288,23 +338,28 @@ filter_function_descriptions = [
 
 
 def filter_features(data, features):
+    """Filters the specified features from the input DataFrame and returns a copy of the filtered data."""
     return data[features].copy()
 
 
 def extract_features_and_target(data, features, target):
+    """Extracts the specified features and target column from the input DataFrame."""
     return data[features], data[target].copy()
 
 
 def extract_time_series_data(data, date_column, numerical_column):
+    """Extracts the date and numerical columns from the input DataFrame for time series analysis."""
     return data[[date_column, numerical_column]].copy()
 
 
 def extract_lat_lng_data(data, latitude, longitude):
+    """Extracts the latitude and longitude columns from the input DataFrame."""
     return data[[latitude, longitude]].copy()
 
 
 # Analysis Functions
 def generic_analysis(data):
+    """Performs generic analysis on the provided DataFrame."""
     logging.info('Working: Generic Analysis')
 
     results = {
@@ -345,6 +400,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
 
 def outlier_detection(dataset_file, data, api_key):
+    """Perform outlier detection analysis."""
     df = data.select_dtypes(include=['number'])
 
     if df.empty:
@@ -370,6 +426,7 @@ def outlier_detection(dataset_file, data, api_key):
 
 
 def regression_analysis(dataset_file, data, api_key):
+    """Perform regression analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -440,6 +497,7 @@ def regression_analysis(dataset_file, data, api_key):
 
 
 def correlation_analysis(dataset_file, data, api_key):
+    """Perform correlation analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -482,6 +540,7 @@ def correlation_analysis(dataset_file, data, api_key):
 
 
 def cluster_analysis(dataset_file, data, api_key):
+    """Perform clustering analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -527,6 +586,7 @@ def cluster_analysis(dataset_file, data, api_key):
 
 
 def classification_analysis(dataset_file, data, api_key):
+    """Perform classification analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -596,7 +656,8 @@ def classification_analysis(dataset_file, data, api_key):
 import folium
 from geopy.distance import geodesic
 
-def geographic_analysis(dataset_file, data, api_key):
+def geospatial_analysis(dataset_file, data, api_key):
+    """Perform geospatial analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -642,6 +703,7 @@ def geographic_analysis(dataset_file, data, api_key):
 
 
 def time_series_analysis(dataset_file, data, api_key):
+    """Perform time series analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
     prompt = f"""\
     You are given a file {dataset_file}.
@@ -692,6 +754,7 @@ def time_series_analysis(dataset_file, data, api_key):
 
 # Plotting Functions
 def plot_time_series(ts_data, num_col):
+    """Plot time series chart."""
     dpi = 100
     plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
     
@@ -710,6 +773,7 @@ def plot_time_series(ts_data, num_col):
 
 
 def plot_regression(y_true, y_pred):
+    """Plot regression chart."""
     dpi = 100
     plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
@@ -731,6 +795,7 @@ def plot_regression(y_true, y_pred):
 from sklearn.metrics import ConfusionMatrixDisplay
 
 def plot_classification(y_true, y_pred):
+    """Plot classification chart."""
     dpi = 100
     plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
@@ -746,6 +811,7 @@ def plot_classification(y_true, y_pred):
 
 
 def plot_correlation(corr):
+    """Plot correlation chart."""
     dpi = 100
     n_cols = len(corr.columns)
     plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
@@ -766,6 +832,7 @@ from PIL import Image
 import selenium
 
 def plot_map(df, city_center, lat, lng):
+    """Plot geospatial chart."""
     map = folium.Map(location=city_center, zoom_start=12)
 
     for i, row in df.iterrows():
@@ -783,6 +850,7 @@ def plot_map(df, city_center, lat, lng):
 
 # Perform Analysis Functions
 def choose_analysis(dataset_file, data, api_key, analyses):
+    """Perform all the provided analysis functions."""
     results = {}
     for analysis in analyses:
         func = eval(analysis)
@@ -800,9 +868,19 @@ def choose_analysis(dataset_file, data, api_key, analyses):
 
 
 def meta_analysis(dataset_file, data, api_key):
-    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 
-                'cluster_analysis', 'classification_analysis', 'geographic_analysis', 
-                'network_analysis', 'time_series_analysis']
+    """Prompt the LLM to choose relevant functions for performing various analyses on the dataset.
+
+    Args:
+        dataset_file (str): Path to the dataset file.
+        data (pandas.DataFrame): The dataset for which analysis is to be performed.
+        api_key (str): API key for making requests to external services.
+
+    Returns:
+        dict: Results from the chosen analyses as specified by the LLM.
+    """
+
+    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 'cluster_analysis', 
+                'classification_analysis', 'geospatial_analysis', 'time_series_analysis']
 
     analysis_function_descriptions = [
         {
@@ -855,6 +933,7 @@ def meta_analysis(dataset_file, data, api_key):
 
 # LLM Prompt: Description Functions
 def describe_generic_analysis(results, dataset_file, data, api_key):
+    """Prompt LLM to describe the generic analysis performed on the dataset."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
 
     prompt = f"""\
@@ -891,6 +970,7 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
 
 
 def describe_meta_analysis(results, dataset_file, data, api_key):
+    """Prompt LLM to describe all the analyses performed on the dataset."""
     responses = []
     for (func, res) in results.items():
         if not res:
@@ -950,17 +1030,20 @@ def main():
 
     # ANALYSIS
     # Describe the given dataset.
-    generic_analysis_results = generic_analysis(data=df)
-    generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
-    write_file('README.md', generated_description)
+    try:
+        generic_analysis_results = generic_analysis(data=df)
+        generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
+        write_file('README.md', generated_description)
+    
+        # Consult LLM and perform analysis.
+        meta_analysis_results = meta_analysis(dataset_file, df, api_key)
+        generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
 
-    # Consult LLM and perform analysis.
-    meta_analysis_results = meta_analysis(dataset_file, df, api_key)
-    # logging.info(meta_analysis_results)
-    generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
-
-    for meta_analysis_description in generated_meta_analysis_descriptions:
-        write_file('README.md', meta_analysis_description)
+        for meta_analysis_description in generated_meta_analysis_descriptions:
+            write_file('README.md', meta_analysis_description)
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return {'error': str(e)}
 
 
 if __name__ == '__main__':
