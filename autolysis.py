@@ -2,12 +2,15 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "chardet",
+#     "folium",
+#     "geopy",
 #     "matplotlib",
 #     "pandas",
 #     "python-dotenv",
 #     "requests",
 #     "scikit-learn",
 #     "seaborn",
+#     "selenium",
 #     "statsmodels",
 #     "tabulate",
 # ]
@@ -263,19 +266,41 @@ filter_function_descriptions = [
             "required": ["date_column", "numerical_column"]
         }
     },
+    {
+        'name': 'extract_lat_lng_data',
+        'description': "Extract the latitude and longitude columns from a dataset for a geospacial analysis.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "latitude": {
+                    "type": "string",
+                    "description": "The column name that represents latitude. Eg. 'lat'",
+                },
+                "longitude": {
+                    "type": "string",
+                    "description": "The column name that represents longitude. Eg. 'lng'",
+                }
+            },
+            "required": ["latitude", "longitude"]
+        }
+    },
 ]
 
 
 def filter_features(data, features):
-    return data[features]
+    return data[features].copy()
 
 
 def extract_features_and_target(data, features, target):
-    return data[features], data[target]
+    return data[features], data[target].copy()
 
 
 def extract_time_series_data(data, date_column, numerical_column):
-    return data[[date_column, numerical_column]]
+    return data[[date_column, numerical_column]].copy()
+
+
+def extract_lat_lng_data(data, latitude, longitude):
+    return data[[latitude, longitude]].copy()
 
 
 # Analysis Functions
@@ -568,9 +593,52 @@ def classification_analysis(dataset_file, data, api_key):
     }
 
 
-# TODO: Add analysis function.
+import folium
+from geopy.distance import geodesic
+
 def geographic_analysis(dataset_file, data, api_key):
-    pass
+    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
+    prompt = f"""\
+    You are given a file {dataset_file}.
+
+    With features:
+    {columns_info}
+
+    Here is a sample:
+    {data.iloc[0, :]}
+
+    Extract the latitude column and the longitude column.
+
+    Note: Do not include column names that include the word 'id'.
+    Hint: Use function extract_lat_lng_data.
+    """
+
+    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
+
+    if not response:
+        return None
+
+    params = json.loads(response['arguments'])
+    chosen_func = eval(response['name'])
+
+    df = chosen_func(data=data, **params)
+    # Column Names: Eg. 'latitude' or 'lat'
+    lat = params['latitude']
+    lng = params['longitude']
+
+    city_center = (df[lat].mean(), df[lng].mean())
+    chart_name = plot_map(df, city_center, lat, lng)
+
+    df['distance'] = df.apply(
+        lambda row: geodesic((row[lat], row[lng]), city_center).km,
+        axis=1)
+    
+    return {
+        'avg_distance_from_city_center_km': df['distance'].mean(),
+        'std_distance_from_city_center_km': df['distance'].std(),
+        'chart': chart_name
+    }
+
 
 
 def time_series_analysis(dataset_file, data, api_key):
@@ -586,7 +654,7 @@ def time_series_analysis(dataset_file, data, api_key):
 
     Extract the date column and the numerical column.
 
-    Note: Do not include column names that include the word 'id'. 
+    Note: Do not include column names that include the word 'id'.
     Hint: Use function extract_time_series_data.
     """
     
@@ -690,6 +758,25 @@ def plot_correlation(corr):
 
     plt.savefig(f"{chart_name}.png", dpi=dpi)
     plt.close()
+
+    return f"{chart_name}.png"
+
+
+from PIL import Image
+import selenium
+
+def plot_map(df, city_center, lat, lng):
+    map = folium.Map(location=city_center, zoom_start=12)
+
+    for i, row in df.iterrows():
+        coords = (row[lat], row[lng])
+        folium.Marker(location=coords).add_to(map)
+    
+    chart_name = name_chart_file()
+
+    img_data = map._to_png(5)
+    img = Image.open(io.BytesIO(img_data))
+    img.save(f"{chart_name}.png")
 
     return f"{chart_name}.png"
 
