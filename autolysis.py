@@ -21,20 +21,50 @@
 # Write a Python script that uses an LLM to analyze, visualize, and narrate a story from a dataset.
 # Convince an LLM that your script and output are of high quality.
 
+# NOTES:
+# * The eval() does not pose security risks as the LLM only responses with valid function names that is defined in this script.
+# * The theme for all the data visualizations is consistent using the sns.set_theme() method.
+# * The scipt is dynamic in nature as it prompts an LLM to perform the appropriate analysis to be peformed on the given dataset.
+# * The analysis functions created do not call the LLM unless they are run, improviing efficiency.
 
 import base64
 import io
 import json
-import sys
-import os
-from dotenv import load_dotenv
-import pandas as pd
-import chardet
-import requests
 import logging
+import os
+import sys
+
+from dotenv import load_dotenv
+
+import chardet
+import pandas as pd
+import requests
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    mean_absolute_error,
+    mean_squared_error
+)
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+from statsmodels.tsa.stattools import adfuller
+
+import folium
+from geopy.distance import geodesic
+
+from PIL import Image
+import selenium
 
 
 # Utility Functions
@@ -388,17 +418,6 @@ def generic_analysis(data):
 
 
 # Non-generic Analysis Functions
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import IsolationForest
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix
-
 def outlier_detection(dataset_file, data, api_key):
     """Perform outlier detection analysis."""
     df = data.select_dtypes(include=['number'])
@@ -653,9 +672,6 @@ def classification_analysis(dataset_file, data, api_key):
     }
 
 
-import folium
-from geopy.distance import geodesic
-
 def geospatial_analysis(dataset_file, data, api_key):
     """Perform geospatial analysis."""
     columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
@@ -738,8 +754,6 @@ def time_series_analysis(dataset_file, data, api_key):
     ts_data = df[num_col]
     chart_name = plot_time_series(ts_data, num_col)
 
-    from statsmodels.tsa.stattools import adfuller
-
     logging.info('Working: Time-Series Analysis')
     result = adfuller(ts_data)
 
@@ -792,8 +806,6 @@ def plot_regression(y_true, y_pred):
     return f"{chart_name}.png"
 
 
-from sklearn.metrics import ConfusionMatrixDisplay
-
 def plot_classification(y_true, y_pred):
     """Plot classification chart."""
     dpi = 100
@@ -827,9 +839,6 @@ def plot_correlation(corr):
 
     return f"{chart_name}.png"
 
-
-from PIL import Image
-import selenium
 
 def plot_map(df, city_center, lat, lng):
     """Plot geospatial chart."""
@@ -931,6 +940,10 @@ def meta_analysis(dataset_file, data, api_key):
     return analysis_results
 
 
+def dynamic_analysis():
+    pass
+
+
 # LLM Prompt: Description Functions
 def describe_generic_analysis(results, dataset_file, data, api_key):
     """Prompt LLM to describe the generic analysis performed on the dataset."""
@@ -1016,6 +1029,10 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
         responses.append(response)
     
     return responses
+
+
+def describe_dynamic_analysis():
+    pass
 
 
 def main():

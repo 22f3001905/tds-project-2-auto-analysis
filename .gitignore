@@ -165,4 +165,4 @@ datasets/
 backup/
 *.sh
 evaluate.py
-results.csv
+*.csv
