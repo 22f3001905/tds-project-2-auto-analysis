@@ -37,6 +37,7 @@ import sys
 from dotenv import load_dotenv
 
 import chardet
+import numpy as np
 import pandas as pd
 import requests
 
@@ -148,60 +149,78 @@ def encode_image(image_path):
         return ""
 
 
-def name_chart_file():
+def name_chart_file(prefix=''):
     """Generate a unique name for a chart file based on existing PNG files in the current directory."""
     try:
         cwd = os.getcwd()
         png_files = [file for file in os.listdir(cwd) if file.endswith(".png")]
         count = len(png_files)
-        return f'chart_{count + 1}'
+        return f'{prefix}chart_{count + 1}'
     except Exception as e:
         logging.error(f"Error generating chart file name: {e}")
         return "chart_unknown"
 
 
-# AI Proxy Functions
-def chat(prompt, api_key, model='gpt-4o-mini'):
-    """Send a chat prompt to the AI API and return the response."""
-    url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+def handle_function_call(function_call, conversation_history, data):
+    """Handles a function call based on the provided name and arguments."""
+    function_name = function_call.get('name')
+    try:
+        args = json.loads(function_call.get('arguments', '{}'))
+    except json.JSONDecodeError as e:
+        raise ValueError("Invalid arguments format: LLM Function Call.") from e
+
+    functions = {
+        'generic_analysis': generic_analysis,
+        'regression_analysis': regression_analysis,
+        'classification_analysis': classification_analysis,
+        'geospatial_analysis': geospatial_analysis, 
+        'time_series_analysis': time_series_analysis,
     }
-    data = {
-        'model': model,
-        'messages': [
+
+    func = functions.get(function_name)
+    if not func:
+        raise ValueError(f"Unknown function: {function_name}")
+    
+    function_result = func(data, **args)
+    
+    # TODO: DataFrame is not JSON serializable.
+    conversation_history.append({
+        "role": "function",
+        "name": function_name,
+        "content": str(function_result),
+    })
+
+    return function_result
+
+
+# AI Proxy Functions
+def chat(prompt, api_key, conversation_history, function_descriptions, model='gpt-4o-mini', base64_image=None):
+    """Send a chat prompt to the LLM and return the response."""
+
+    user_message = [{
+        'role': 'user',
+        'content': prompt
+    }]
+
+    if base64_image:
+        content = [
             {
-                'role': 'system',
-                'content': 'You are a concise assistant and a data science expert. Provide brief and to-the-point answers.'
+                'type': 'text',
+                'text': prompt
             },
             {
-                'role': 'user',
-                'content': prompt
+                'type': 'image_url',
+                'image_url': {
+                    'url': f'data:image/png;base64,{base64_image}',
+                    "detail": "low"
+                }
             }
-        ]
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
-        output = response.json()
+        ]        
+        
+        user_message[0]['content'] = content
 
-        if output.get('error'):
-            logging.error(f"LLM Error: {output}")
-            return None
+    conversation_history += user_message
 
-        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-        return output['choices'][0]['message']['content']
-    except requests.exceptions.RequestException as e:
-        logging.error(f"HTTP Request failed: {e}")
-        return None
-    except KeyError as e:
-        logging.error(f"Unexpected response format: {e}")
-        return None
-
-
-def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
-    """Send an image and prompt to the AI API for information extraction."""
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
         'Content-Type': 'application/json',
@@ -209,63 +228,11 @@ def image_info(base64_image, prompt, api_key, model='gpt-4o-mini'):
     }
     data = {
         'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': prompt
-                    },
-                    {
-                        'type': 'image_url',
-                        'image_url': {
-                            'url': f'data:image/png;base64,{base64_image}',
-                            "detail": "low"
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
-        output = response.json()
-
-        if output.get('error'):
-            logging.error(f"LLM Error: {output}")
-            return None
-
-        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-        return output['choices'][0]['message']['content']
-    except requests.exceptions.RequestException as e:
-        logging.error(f"HTTP Request failed: {e}")
-        return None
-    except KeyError as e:
-        logging.error(f"Unexpected response format: {e}")
-        return None
-
-
-# AI Proxy 'Function Call' Functions
-def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-mini'):
-    """Call an AI API for a function completion based on user input."""
-    url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
-    }
-    data = {
-        'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ],
+        'messages': conversation_history,
         'functions': function_descriptions,
         'function_call': 'auto'
     }
+
     try:
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
@@ -274,210 +241,39 @@ def chat_function_call(prompt, api_key, function_descriptions, model='gpt-4o-min
         if output.get('error'):
             logging.error(f"LLM Error: {output}")
             return None
+
+        # Log LLM Costs
+        monthly_cost = output.get('monthlyCost')
+        if monthly_cost is not None:
+            logging.info(f"Monthly Cost: {monthly_cost:.4f}")
+            logging.info(f"Percentage Used: {(monthly_cost / 2) * 100:.4f}%")
         
-        logging.info(f"Monthly Cost: {output.get('monthlyCost', None)}")
-        
+        assistant_message = output['choices'][0]['message']
+        conversation_history.append(assistant_message)
+
+        assistant_content = assistant_message.get('content')
+        function_call = assistant_message.get('function_call')
+
         return {
-            'arguments': output['choices'][0]['message']['function_call']['arguments'],
-            'name': output['choices'][0]['message']['function_call']['name']
+            'content': assistant_content,
+            'function_call': function_call
         }
     except requests.exceptions.RequestException as e:
         logging.error(f"HTTP Request failed: {e}")
         return None
-    except (KeyError, IndexError) as e:
+    except KeyError as e:
         logging.error(f"Unexpected response format: {e}")
         return None
 
 
-filter_function_descriptions = [
-    {
-        'name': 'filter_features',
-        'description': 'Generic function to extract data from a dataset.',
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "features": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "List of column names to keep. Eg. ['language', 'quality']",
-                },
-            },
-            "required": ["features"]
-        }
-    },
-    {
-        'name': 'extract_features_and_target',
-        'description': 'Extract a feature matrix and a target vector for training a regression model. Call this when you need to get X and y for a Regression or Classification task.',
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "features": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "List of column names to choose for the feature matrix. Eg. ['n_rooms', 'locality', 'latitude']",
-                },
-                "target": {
-                    "type": "string",
-                    "description": "The column name of the target. Eg. 'price'",
-                },
-            },
-            "required": ["features", "target"]
-        }
-    },
-    {
-        'name': 'extract_time_series_data',
-        'description': "Extract the time column and numerical column for a time series analysis. Eg. 'date' and 'price'",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "date_column": {
-                    "type": "string",
-                    "description": "The column name of the date column.",
-                },
-                "numerical_column": {
-                    "type": "string",
-                    "description": "The column name of the numerical column. Eg. 'price'",
-                }
-            },
-            "required": ["date_column", "numerical_column"]
-        }
-    },
-    {
-        'name': 'extract_lat_lng_data',
-        'description': "Extract the latitude and longitude columns from a dataset for a geospacial analysis.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "latitude": {
-                    "type": "string",
-                    "description": "The column name that represents latitude. Eg. 'lat'",
-                },
-                "longitude": {
-                    "type": "string",
-                    "description": "The column name that represents longitude. Eg. 'lng'",
-                }
-            },
-            "required": ["latitude", "longitude"]
-        }
-    },
-]
-
-
-def filter_features(data, features):
-    """Filters the specified features from the input DataFrame and returns a copy of the filtered data."""
-    return data[features].copy()
-
-
-def extract_features_and_target(data, features, target):
-    """Extracts the specified features and target column from the input DataFrame."""
-    return data[features], data[target].copy()
-
-
-def extract_time_series_data(data, date_column, numerical_column):
-    """Extracts the date and numerical columns from the input DataFrame for time series analysis."""
-    return data[[date_column, numerical_column]].copy()
-
-
-def extract_lat_lng_data(data, latitude, longitude):
-    """Extracts the latitude and longitude columns from the input DataFrame."""
-    return data[[latitude, longitude]].copy()
-
-
-# Analysis Functions
-def generic_analysis(data):
-    """Performs generic analysis on the provided DataFrame."""
-    logging.info('Working: Generic Analysis')
-
-    results = {
-        'first_5': data.head(),
-        'summary_stats': data.describe(),
-        'missing_values': data.isnull().sum(),
-        'column_data_types': data.dtypes,
-        'n_unique': data.nunique(),
-        'n_duplicates': data.duplicated().sum()
-    }
-
-    buffer = io.StringIO()
-    data.info(buf=buffer)
-    results['basic_info'] = buffer.getvalue()
-    buffer.close()
-
-    # Compute correlation matrix for numeric columns only
-    numeric_data = data.select_dtypes(include=['number'])
-    if numeric_data.empty:
-        logging.warning("No numeric columns found.")
-        results['corr'] = None
-    else:
-        results['corr'] = numeric_data.corr()
-
-    return results
-
-
-# Non-generic Analysis Functions
-def outlier_detection(dataset_file, data, api_key):
-    """Perform outlier detection analysis."""
-    df = data.select_dtypes(include=['number'])
-
-    if df.empty:
-        logging.warning("No numeric columns found.")
-        return None
-    
-    preprocessing = Pipeline([
-        ('imputer', SimpleImputer(strategy='mean')),
-        ('scaler', StandardScaler()),
-    ])
-    isolation_forest = IsolationForest(contamination='auto', random_state=42)
-
-    logging.info('Running: Outlier Detection')
-    df_tr = preprocessing.fit_transform(df)
-    isolation_forest.fit(df_tr)
-
-    anomaly_score = isolation_forest.predict(df_tr)
-
-    return { 
-        'n_anomalies': (anomaly_score == -1).sum(), 
-        'n_samples': df_tr.shape[0]
-    }
-
-
-def regression_analysis(dataset_file, data, api_key):
+# Static Analysis Functions
+def regression_analysis(data, target):
     """Perform regression analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
 
-    With features:
-    {columns_info}
+    X = data.drop(target, axis=1)
+    y = data[target]
 
-    Here is a sample:
-    {data.iloc[0, :]}
-
-    Extract the features and target for Regression task.
-    Note: Do not include column names that include the word 'id'.
-
-    Make sure to NOT include the target variable in the features list.
-    """
-    
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-    
-    if 'target' not in params.keys():
-        return None
-    
-    params['features'] = list(filter(lambda feature: feature != params['target'], params['features']))
-
-    X, y = chosen_func(data=data, **params)
     X = X.select_dtypes(include=['number'])
-
     if X.empty:
         logging.warning("No numeric columns found.")
         return None
@@ -514,133 +310,15 @@ def regression_analysis(dataset_file, data, api_key):
         'chart': chart_name
     }
 
-
-def correlation_analysis(dataset_file, data, api_key):
-    """Perform correlation analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
-
-    With features:
-    {columns_info}
-
-    Here is a sample:
-    {data.iloc[0, :]}
-
-    Extract only the most important features to perform a Correlation analysis.
-    Eg. 'height', 'weight', etc.
-    
-    Note: Do not include column names that include the word 'id'.
-    Hint: Use function filter_features.
-    """
-    
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-    
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-
-    df = chosen_func(data=data, **params)
-    numeric_data = df.select_dtypes(include=['number'])
-
-    if numeric_data.empty:
-        logging.warning("No numeric columns found.")
-        return None
-    
-    corr = numeric_data.corr()
-    chart_name = plot_correlation(corr)
-
-    return {
-        'correlation_matrix': corr,
-        'chart': chart_name
-    }
-
-
-def cluster_analysis(dataset_file, data, api_key):
-    """Perform clustering analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
-
-    With features:
-    {columns_info}
-
-    Here is a sample:
-    {data.iloc[0, :]}
-
-    Extract only the most important features to perform a Clustering analysis using K-Means.
-    
-    Note: Do not include column names that include the word 'id'. 
-    Hint: Use function filter_features.
-    """
-    
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-    
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-
-    df = chosen_func(data=data, **params)
-
-    # TODO: (Optional) Use LLM to separate numerical cols from categorical cols.
-    df = df.select_dtypes(include=['number'])
-
-    pipe = Pipeline([
-        ('imputer', SimpleImputer(strategy='mean')),
-        ('scaler', StandardScaler()),
-        ('kmeans', KMeans(n_clusters=4, random_state=42))
-    ])
-
-    logging.info('Working: K-Means Clustering')
-    pipe.fit(df)
-
-    return {
-        'cluster_centers': pipe['kmeans'].cluster_centers_,
-        'inertia': pipe['kmeans'].inertia_,
-    }
-
-
-def classification_analysis(dataset_file, data, api_key):
+def classification_analysis(data, label):
     """Perform classification analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
 
-    With features:
-    {columns_info}
+    X = data.drop(label, axis=1)
+    y = data[label]
 
-    Here is a sample:
-    {data.iloc[0, :]}
-
-    Extract the features and target for Classification task.
-    Note: Do not include column names that include the word 'id'.
-
-    Make sure to NOT include the target variable in the features list.
-    Note: The target column should be categorical datatype.
-    """
-
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-    
-    if 'target' not in params.keys():
-        return None
-    
-    params['features'] = list(filter(lambda feature: feature != params['target'], params['features']))
-
-    X, y = chosen_func(data=data, **params)
     X = X.select_dtypes(include=['number'])
-
-    if y.nunique() > 20:
-        logging.warning('y is not a valid target label.')
+    if y.nunique() > 10:
+        logging.warning('y is not a valid label.')
         return None
 
     if X.empty:
@@ -671,43 +349,14 @@ def classification_analysis(dataset_file, data, api_key):
         'chart': chart_name
     }
 
+def geospatial_analysis(data, latitude, longitude):
+    df = data[[latitude, longitude]].copy()
 
-def geospatial_analysis(dataset_file, data, api_key):
-    """Perform geospatial analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
-
-    With features:
-    {columns_info}
-
-    Here is a sample:
-    {data.iloc[0, :]}
-
-    Extract the latitude column and the longitude column.
-
-    Note: Do not include column names that include the word 'id'.
-    Hint: Use function extract_lat_lng_data.
-    """
-
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-
-    df = chosen_func(data=data, **params)
-    # Column Names: Eg. 'latitude' or 'lat'
-    lat = params['latitude']
-    lng = params['longitude']
-
-    city_center = (df[lat].mean(), df[lng].mean())
-    chart_name = plot_map(df, city_center, lat, lng)
+    city_center = (df[latitude].mean(), df[longitude].mean())
+    chart_name = plot_map(df, city_center, latitude, longitude)
 
     df['distance'] = df.apply(
-        lambda row: geodesic((row[lat], row[lng]), city_center).km,
+        lambda row: geodesic((row[latitude], row[longitude]), city_center).km,
         axis=1)
     
     return {
@@ -716,43 +365,17 @@ def geospatial_analysis(dataset_file, data, api_key):
         'chart': chart_name
     }
 
-
-
-def time_series_analysis(dataset_file, data, api_key):
+def time_series_analysis(data, date_column, numerical_column):
     """Perform time series analysis."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    prompt = f"""\
-    You are given a file {dataset_file}.
 
-    With features:
-    {columns_info}
+    df = data[[date_column, numerical_column]].copy()
+    df = df.dropna(axis=0)
 
-    Here is a sample:
-    {data.iloc[0, :]}
+    df[date_column] = pd.to_datetime(df[date_column])
+    df = df.set_index(date_column).sort_index()
 
-    Extract the date column and the numerical column.
-
-    Note: Do not include column names that include the word 'id'.
-    Hint: Use function extract_time_series_data.
-    """
-    
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=filter_function_descriptions)
-
-    if not response:
-        return None
-    
-    params = json.loads(response['arguments'])
-    chosen_func = eval(response['name'])
-
-    df = chosen_func(data=data, **params)
-    date_col = params['date_column']
-    num_col = params['numerical_column']
-
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.set_index(date_col).sort_index()
-
-    ts_data = df[num_col]
-    chart_name = plot_time_series(ts_data, num_col)
+    ts_data = df[numerical_column]
+    chart_name = plot_time_series(ts_data, numerical_column)
 
     logging.info('Working: Time-Series Analysis')
     result = adfuller(ts_data)
@@ -766,28 +389,131 @@ def time_series_analysis(dataset_file, data, api_key):
     }
 
 
+# Generic Analysis Functions
+def outlier_detection(data):
+    """Perform outlier detection analysis."""
+    df = data.select_dtypes(include=['number'])
+
+    if df.empty:
+        logging.warning("No numeric columns found.")
+        return None
+    
+    preprocessing = Pipeline([
+        ('imputer', SimpleImputer(strategy='mean')),
+        ('scaler', StandardScaler()),
+    ])
+    isolation_forest = IsolationForest(contamination='auto', random_state=42)
+
+    logging.info('Running: Outlier Detection')
+    df_tr = preprocessing.fit_transform(df)
+    isolation_forest.fit(df_tr)
+
+    anomaly_score = isolation_forest.predict(df_tr)
+
+    return { 
+        'n_anomalies': (anomaly_score == -1).sum(), 
+        'n_samples': df_tr.shape[0]
+    }
+
+def correlation_analysis(data):
+    """Perform correlation analysis."""
+    df = data.select_dtypes(include=['number'])
+
+    if df.empty:
+        logging.warning("No numeric columns found.")
+        return None
+    
+    corr = df.corr()
+    chart_name = plot_correlation(corr)
+
+    return {
+        'correlation_matrix': corr,
+        'chart': chart_name
+    }
+
+def cluster_analysis(data):
+    """Perform clustering analysis."""
+    df = data.select_dtypes(include=['number'])
+
+    if df.empty:
+        logging.warning("No numeric columns found.")
+        return None
+
+    pipe = Pipeline([
+        ('imputer', SimpleImputer(strategy='mean')),
+        ('scaler', StandardScaler()),
+        ('kmeans', KMeans(n_clusters=4, random_state=42))
+    ])
+
+    logging.info('Working: K-Means Clustering')
+    pipe.fit(df)
+
+    return {
+        'cluster_centers': pipe['kmeans'].cluster_centers_,
+        'inertia': pipe['kmeans'].inertia_,
+    }
+
+def generic_analysis(data):
+    """Performs generic analysis on the provided DataFrame."""
+
+    # generic = ['outlier_detection', 'correlation_analysis', 'cluster_analysis']
+    logging.info('Working: Generic Analysis')
+
+    results = {
+        'column_names': list(data.columns),
+        'first_3': data.head(3),
+        'summary_stats': data.describe(),
+        'missing_values': data.isnull().sum(),
+        'column_data_types': data.dtypes,
+        'n_unique': data.nunique(),
+        'n_duplicates': data.duplicated().sum(),
+        'outlier_detection': outlier_detection(data),
+        'correlation_analysis': correlation_analysis(data),
+        'cluster_analysis': cluster_analysis(data),
+    }
+
+    buffer = io.StringIO()
+    data.info(buf=buffer)
+    results['column_info'] = buffer.getvalue()
+    buffer.close()
+
+    return results
+
+
 # Plotting Functions
 def plot_time_series(ts_data, num_col):
     """Plot time series chart."""
+    sns.set_theme('notebook')
     dpi = 100
-    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+
+    time_periods = ['D', 'W', 'ME', 'QE', 'YE']
+    selected_period = 'D'
+
+    for period in time_periods:
+        resampled_data = ts_data.resample(period).mean()
+        if resampled_data.shape[0] >= 20:
+            selected_period = period
+
+    resampled_data = ts_data.resample(selected_period).mean()
+
+    plt.figure(figsize=(20, 6), dpi=dpi)
     
-    plt.plot(ts_data, label=num_col)
+    plt.plot(resampled_data, label=num_col)
     plt.title(f"Time Series of {num_col}")
-    plt.xlabel("Date")
-    plt.ylabel(num_col)
+    plt.xlabel(f"Time Period (in {selected_period})")
+    plt.ylabel(f"Mean {num_col}")
     plt.legend()
 
     chart_name = name_chart_file()
     
-    plt.savefig(f"{chart_name}.png")
+    plt.savefig(f"{chart_name}.png", dpi=dpi)
     plt.close()
 
     return f"{chart_name}.png"
 
-
 def plot_regression(y_true, y_pred):
     """Plot regression chart."""
+    sns.set_theme('notebook')
     dpi = 100
     plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
@@ -800,34 +526,34 @@ def plot_regression(y_true, y_pred):
 
     chart_name = name_chart_file()
 
-    plt.savefig(f"{chart_name}.png")
+    plt.savefig(f"{chart_name}.png", dpi=dpi)
     plt.close()
 
     return f"{chart_name}.png"
 
-
 def plot_classification(y_true, y_pred):
     """Plot classification chart."""
+    sns.set_theme('notebook')
     dpi = 100
-    plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
+    n_cols = len(np.unique(y_true)) + 3
+    plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
 
     ConfusionMatrixDisplay.from_predictions(y_true, y_pred)
     plt.grid(False)
 
     chart_name = name_chart_file()
 
-    plt.savefig(f"{chart_name}.png")
+    plt.savefig(f"{chart_name}.png", dpi=dpi)
     plt.close()
 
     return f"{chart_name}.png"
 
-
 def plot_correlation(corr):
     """Plot correlation chart."""
+    sns.set_theme('notebook')
     dpi = 100
-    n_cols = len(corr.columns)
+    n_cols = len(corr.columns) + 3
     plt.figure(figsize=(n_cols, n_cols), dpi=dpi)
-    # plt.figure(figsize=(512 / dpi, 512 / dpi), dpi=dpi)
 
     sns.heatmap(corr, annot=True, cmap='RdYlGn', fmt=".2f")
     plt.title('Correlation Heatmap')
@@ -838,7 +564,6 @@ def plot_correlation(corr):
     plt.close()
 
     return f"{chart_name}.png"
-
 
 def plot_map(df, city_center, lat, lng):
     """Plot geospatial chart."""
@@ -857,92 +582,8 @@ def plot_map(df, city_center, lat, lng):
     return f"{chart_name}.png"
 
 
-# Perform Analysis Functions
-def choose_analysis(dataset_file, data, api_key, analyses):
-    """Perform all the provided analysis functions."""
-    results = {}
-    for analysis in analyses:
-        func = eval(analysis)
-        
-        try:
-            res = func(dataset_file, data, api_key)
-        except:
-            logging.error(f'Error in {analysis} function.')
-            res = None
-
-        if res != None:
-            results[analysis] = res
-    
-    return results
-
-
-def meta_analysis(dataset_file, data, api_key):
-    """Prompt the LLM to choose relevant functions for performing various analyses on the dataset.
-
-    Args:
-        dataset_file (str): Path to the dataset file.
-        data (pandas.DataFrame): The dataset for which analysis is to be performed.
-        api_key (str): API key for making requests to external services.
-
-    Returns:
-        dict: Results from the chosen analyses as specified by the LLM.
-    """
-
-    analyses = ['outlier_detection', 'regression_analysis', 'correlation_analysis', 'cluster_analysis', 
-                'classification_analysis', 'geospatial_analysis', 'time_series_analysis']
-
-    analysis_function_descriptions = [
-        {
-            'name': 'choose_analysis',
-            'description': 'A function to choose all the relevant analysis to be performed for a dataset.',
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "analyses": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "List of analysis to perform in order. Eg. ['regression_analysis', 'time_series_analysis', 'outlier_detection']",
-                    },
-                },
-                "required": ["indices"]
-            }
-        }
-    ]
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-    
-    order_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(analyses)])
-    
-    prompt = f"""\
-    You are given a file {dataset_file}.
-
-    With features:
-    {columns_info}
-
-    Here are a few samples:
-    {data.iloc[:3, :]}
-
-    Note: Perform only the appropriate analyses.
-
-    Analysis options:
-    {order_list_analyses}
-
-    Call the choose_analysis function with the correct options.
-    """
-
-    response = chat_function_call(prompt=prompt, api_key=api_key, function_descriptions=analysis_function_descriptions)
-
-    params = json.loads(response['arguments'])
-    choose_analysis_func = eval(response['name'])
-
-    analysis_results = choose_analysis_func(dataset_file, data, api_key, **params)
-    return analysis_results
-
-
 def dynamic_analysis():
     pass
-
 
 # LLM Prompt: Description Functions
 def describe_generic_analysis(results, dataset_file, data, api_key):
@@ -956,7 +597,7 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     {columns_info}
 
     Here are a few samples:
-    {results['first_5']}
+    {results['first_3']}
 
     Summary Statistics:
     {results['summary_stats']}
@@ -971,7 +612,7 @@ def describe_generic_analysis(results, dataset_file, data, api_key):
     {results['n_duplicates']}
 
     Correlation Analysis:
-    {results['corr']}
+    {results['correlation_matrix']}
 
     Give a short description about the given dataset. Also provide a brief description of the given statistical analysis. 
     
@@ -1014,13 +655,10 @@ def describe_meta_analysis(results, dataset_file, data, api_key):
             Analyze and infer insights from the chart, then summarize the findings.
             """
 
-            image_analysis = image_info(chart_base64, prompt=img_analysis_prompt, api_key=api_key)
+            # image_analysis = image_info(chart_base64, prompt=img_analysis_prompt, api_key=api_key)
 
             prompt += f"""
             Additional: Add the chart image which is a .png file with its analysis to the markdown output.
-
-            Chart Analysis Summary:
-            {image_analysis}
 
             Output in valid markdown format.
             """
@@ -1035,6 +673,12 @@ def describe_dynamic_analysis():
     pass
 
 
+def log_conversation_history(conversation_history):
+    write_file('conversation_history.log', conversation_history, title='Conversation History')
+
+def log_results(result):
+    write_file('results.log', result)
+
 def main():
     # SETUP
     sns.set_theme('notebook')
@@ -1047,20 +691,173 @@ def main():
 
     # ANALYSIS
     # Describe the given dataset.
-    try:
-        generic_analysis_results = generic_analysis(data=df)
-        generated_description = describe_generic_analysis(generic_analysis_results, dataset_file, df, api_key)
-        write_file('README.md', generated_description)
-    
-        # Consult LLM and perform analysis.
-        meta_analysis_results = meta_analysis(dataset_file, df, api_key)
-        generated_meta_analysis_descriptions = describe_meta_analysis(meta_analysis_results, dataset_file, df, api_key)
+    conversation_history = [
+        {
+            'role': 'system',
+            'content': 'You are a concise assistant and a data science expert. Provide brief and to-the-point answers.'
+        }
+    ]
 
-        for meta_analysis_description in generated_meta_analysis_descriptions:
-            write_file('README.md', meta_analysis_description)
+    function_descriptions = [
+        {
+            'name': 'generic_analysis',
+            'description': 'Performs a generic analysis on a dataset. This includes analyzing number of unique data points, summary statistics, column data types etc.',
+        },
+        {
+            'name': 'regression_analysis',
+            'description': 'Performs a regression analysis on the DataFrame.',
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "The column name of the target. Eg. 'price'",
+                    },
+                },
+                "required": ["target"]
+            }
+        },
+        {
+            'name': 'classification_analysis',
+            'description': 'Performs a classification analysis on the DataFrame.',
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "label": {
+                        "type": "string",
+                        "description": "The column name of the label. Eg. 'has_disease'",
+                    },
+                },
+                "required": ["label"]
+            }
+        },
+        {
+            'name': 'time_series_analysis',
+            'description': "Performs a time series analysis on the DataFrame.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_column": {
+                        "type": "string",
+                        "description": "The column name of the date column. Eg. 'date' or 'year' etc.",
+                    },
+                    "numerical_column": {
+                        "type": "string",
+                        "description": "The column name of the numerical column. Eg. 'price'",
+                    }
+                },
+                "required": ["date_column", "numerical_column"]
+            }
+        },
+        {
+            'name': 'geospatial_analysis',
+            'description': "Performs a geospacial analysis on the DataFrame.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "latitude": {
+                        "type": "string",
+                        "description": "The column name that represents latitude. Eg. 'lat'",
+                    },
+                    "longitude": {
+                        "type": "string",
+                        "description": "The column name that represents longitude. Eg. 'lng'",
+                    }
+                },
+                "required": ["latitude", "longitude"]
+            }
+        },
+    ]
+    
+    try:
+        params = {
+            'api_key': api_key, 
+            'conversation_history': conversation_history, 
+            'function_descriptions': function_descriptions
+        }
+
+        # TODO: Remove this before deployment.
+        print(chat('List all the functions that you can call?', **params)['content'])
+        print('---'*10)
+
+        generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
+        
+        generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
+        generic_analysis_results = handle_function_call(generic_analysis_function_call, conversation_history, data=df)
+        print('---'*10)
+
+        print(chat('Write a short description about the dataset and the generic analysis result.', **params))
+        print('---'*10)
+
+        print(chat('This is the chart for the covariance matrix.', **params, base64_image=encode_image(generic_analysis_results['correlation_analysis']['chart'])))
+        print('---'*10)
+
+        static_analysis_functions = [
+            'regression_analysis', 
+            'classification_analysis', 
+            'geospatial_analysis', 
+            'time_series_analysis'
+        ]
+
+        order_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(static_analysis_functions)])
+
+        static_analysis_prompt = f"""\
+        Call the most appropriate analysis function from the given list below with the correct parameter.
+        
+        You have to figure out the correct parameters for the function call.
+
+        Analysis functions:
+        {order_list_analyses}
+
+        Note: If an analysis from the list is already performed don't repeat it, select a different one.
+        """
+
+        static_analysis_results = {}
+
+        for _ in range(2):
+            static_analysis_function_call = chat(static_analysis_prompt, **params)['function_call']
+
+            if not static_analysis_function_call:
+                print('Function call was not called!')
+                break
+
+            analysis_func_name = static_analysis_function_call.get('name')
+            
+            static_analysis_results[analysis_func_name] = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+
+            print(chat(f'This is the chart for visualizing {analysis_func_name}. Use this and the analysis results computed earlier to write a short description.', **params, base64_image=encode_image(static_analysis_results[analysis_func_name]['chart'])))
+
+            print('---'*10)
+
+        # TODO: Dynamic Analysis: Use tenacity library to retry results.
+        
+        # TODO: Narrate a story.
+        narrative_prompt = f"""\
+        Write a story about the analysis. You are already aware of the dataset structure, the generic analysis results, static analysis results, and charts generated for visualizations.
+
+        Describe the following:
+        * The dataset you received, briefly
+        * The analysis you carried out
+        * The insights you discovered
+        * The implications of your findings (i.e. what to do with the insights)
+
+        Note: Output the story in valid Markdown.
+        Note: Use the things learned in the context window.
+        Note: Add charts in the correct locations in the markdown.
+        """
+
+        story = chat(narrative_prompt, **params)['content']
+        write_file('README.md', story)
+
+        log_conversation_history(conversation_history)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+        log_conversation_history(conversation_history)
         return {'error': str(e)}
+    
+    print('\n\nResults\n')
+    log_results(str(generic_analysis_results))
+    log_results(str(static_analysis_results))
 
 
 if __name__ == '__main__':
