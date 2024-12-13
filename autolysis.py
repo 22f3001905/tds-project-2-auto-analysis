@@ -5,10 +5,12 @@
 #     "folium",
 #     "geopy",
 #     "matplotlib",
+#     "numpy",
 #     "pandas",
 #     "python-dotenv",
 #     "requests",
 #     "scikit-learn",
+#     "scipy",
 #     "seaborn",
 #     "selenium",
 #     "statsmodels",
@@ -22,11 +24,11 @@
 # Convince an LLM that your script and output are of high quality.
 
 # NOTES:
-# * The eval() does not pose security risks as the LLM only responses with valid function names that is defined in this script.
 # * The theme for all the data visualizations is consistent using the sns.set_theme() method.
 # * The scipt is dynamic in nature as it prompts an LLM to perform the appropriate analysis to be peformed on the given dataset.
-# * The analysis functions created do not call the LLM unless they are run, improviing efficiency.
 
+
+import ast
 import base64
 import io
 import json
@@ -183,7 +185,6 @@ def handle_function_call(function_call, conversation_history, data):
     
     function_result = func(data, **args)
     
-    # TODO: DataFrame is not JSON serializable.
     conversation_history.append({
         "role": "function",
         "name": function_name,
@@ -215,7 +216,7 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
                     "detail": "low"
                 }
             }
-        ]        
+        ]
         
         user_message[0]['content'] = content
 
@@ -246,6 +247,7 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
         monthly_cost = output.get('monthlyCost')
         if monthly_cost is not None:
             logging.info(f"Monthly Cost: {monthly_cost:.4f}")
+            # TODO: Change this to $5.
             logging.info(f"Percentage Used: {(monthly_cost / 2) * 100:.4f}%")
         
         assistant_message = output['choices'][0]['message']
@@ -582,102 +584,19 @@ def plot_map(df, city_center, lat, lng):
     return f"{chart_name}.png"
 
 
-def dynamic_analysis():
-    pass
-
-# LLM Prompt: Description Functions
-def describe_generic_analysis(results, dataset_file, data, api_key):
-    """Prompt LLM to describe the generic analysis performed on the dataset."""
-    columns_info = "\n".join([f"{col}: {dtype}" for col, dtype in data.dtypes.items()])
-
-    prompt = f"""\
-    You are given a file: {dataset_file}
-
-    Features:
-    {columns_info}
-
-    Here are a few samples:
-    {results['first_3']}
-
-    Summary Statistics:
-    {results['summary_stats']}
-
-    Missing Values:
-    {results['missing_values']}
-
-    Number of unique values in each column:
-    {results['n_unique']}
-
-    Number of duplicated rows:
-    {results['n_duplicates']}
-
-    Correlation Analysis:
-    {results['correlation_matrix']}
-
-    Give a short description about the given dataset. Also provide a brief description of the given statistical analysis. 
-    
-    Output in valid markdown format.
-    """
-
-    response = chat(prompt=prompt, api_key=api_key)
-    return response
-
-
-def describe_meta_analysis(results, dataset_file, data, api_key):
-    """Prompt LLM to describe all the analyses performed on the dataset."""
-    responses = []
-    for (func, res) in results.items():
-        if not res:
-            continue
-        
-        prompt = f"""\
-        Analysis Function: {func}
-
-        Results:
-        {res}
-
-        The given analysis was performed on {dataset_file}.
-        What are some of the findings of this analysis?
-
-        * Write about the analysis that was performed.
-        * Try to infer insights from the results of the analysis.
-        * Provide a description about the insights you discovered.
-        * Give the implications of your findings.
-
-        Output in valid markdown format.
-        """
-    
-        img_path = res.get('chart', None)
-        if img_path:
-            chart_base64 = encode_image(img_path)
-            img_analysis_prompt = """\
-            Here is a chart to visualize some information in a .csv file. 
-            Analyze and infer insights from the chart, then summarize the findings.
-            """
-
-            # image_analysis = image_info(chart_base64, prompt=img_analysis_prompt, api_key=api_key)
-
-            prompt += f"""
-            Additional: Add the chart image which is a .png file with its analysis to the markdown output.
-
-            Output in valid markdown format.
-            """
-
-        response = chat(prompt=prompt, api_key=api_key)
-        responses.append(response)
-    
-    return responses
-
-
-def describe_dynamic_analysis():
-    pass
-
-
+# Log Functions (Debug Code + LLM Outputs)
 def log_conversation_history(conversation_history):
-    write_file('conversation_history.log', conversation_history, title='Conversation History')
+    try:
+        write_file('logs/conversation_history.log', str(conversation_history), title='Conversation History')
+    except Exception as e:
+        logging.error(f"Failed to log conversation history: {e}")
 
 def log_results(result):
-    write_file('results.log', result)
+    try:
+        write_file('logs/results.log', str(result))
+    except Exception as e:
+        logging.error(f"Failed to log results: {e}")
+
 
 def main():
     # SETUP
@@ -780,6 +699,7 @@ def main():
         print(chat('List all the functions that you can call?', **params)['content'])
         print('---'*10)
 
+        # Generic Analysis
         generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
         
         generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
@@ -792,6 +712,7 @@ def main():
         print(chat('This is the chart for the covariance matrix.', **params, base64_image=encode_image(generic_analysis_results['correlation_analysis']['chart'])))
         print('---'*10)
 
+        # Static Analysis Function Calls
         static_analysis_functions = [
             'regression_analysis', 
             'classification_analysis', 
@@ -799,7 +720,7 @@ def main():
             'time_series_analysis'
         ]
 
-        order_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(static_analysis_functions)])
+        ordered_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(static_analysis_functions)])
 
         static_analysis_prompt = f"""\
         Call the most appropriate analysis function from the given list below with the correct parameter.
@@ -807,9 +728,10 @@ def main():
         You have to figure out the correct parameters for the function call.
 
         Analysis functions:
-        {order_list_analyses}
+        {ordered_list_analyses}
 
         Note: If an analysis from the list is already performed don't repeat it, select a different one.
+        Note: Make use of prior analyses to make your choice.
         """
 
         static_analysis_results = {}
@@ -830,10 +752,64 @@ def main():
             print('---'*10)
 
         # TODO: Dynamic Analysis: Use tenacity library to retry results.
+        # available_libraries = [
+        #     "geopy",
+        #     "numpy",
+        #     "pandas",
+        #     "scikit-learn",
+        #     "scipy",
+        #     "statsmodels",
+        # ]
+
+        # ordered_list_libraries = "\n".join([f'{i+1}. {library_name}' for (i, library_name) in enumerate(available_libraries)])
+
+        # dynamic_prompt = f"""\
+        # Write a Python function to analyze the dataset. Name the function `dynamic_analysis(data)` where data is a DataFrame object.
         
-        # TODO: Narrate a story.
+        # Follow ALL the following instructions carefully:
+        # * The analysis should be distinct from the ones you have performed earlier. 
+        # * The function should return relevant analysis results as a Python dictionary.
+        # * The function should handle missing values in `data`.
+        # * DO NOT ouput the entire DataFrame object.
+
+        # Here is a list of python libraries that you are allowed to use:
+        # {ordered_list_libraries}
+
+        # Ouput ONLY the Python function and nothing else.
+        # """
+
+        # execution_env = {}
+        # dynamic_analysis_results = None
+        # generated_function = chat(dynamic_prompt, **params)['content']
+
+        # print(generated_function)
+        # breakpoint()
+
+        # try:
+        #     ast.parse(generated_function)
+        #     logging.info("Code parsed successfully.")
+
+        #     exec(generated_function, execution_env)
+
+        #     if 'dynamic_analysis' in execution_env:
+        #         dynamic_analysis = execution_env['dynamic_analysis']
+        #         dynamic_analysis_results = dynamic_analysis(df)
+        # except SyntaxError as e:
+        #     logging.error("Syntax error in generated code:", e)
+        # except Exception as e:
+        #     logging.exception("An unexpected error occurred during execution:", e)
+
+        # print(chat(f"""
+        # Here are the results from the dynamic analysis you performed: {dynamic_analysis_results}
+
+        # Write a short description about the results obtained.
+        # """, **params))
+
+        # print('---'*10)
+
+        # Narrate a Story
         narrative_prompt = f"""\
-        Write a story about the analysis. You are already aware of the dataset structure, the generic analysis results, static analysis results, and charts generated for visualizations.
+        Write a story about the analysis. You are already aware of the dataset structure, the generic analysis results, static analysis results, dynamic analysis results, and charts generated for visualizations.
 
         Describe the following:
         * The dataset you received, briefly
@@ -850,14 +826,16 @@ def main():
         write_file('README.md', story)
 
         log_conversation_history(conversation_history)
+        log_results(generic_analysis_results)
+        log_results(static_analysis_results)
+        # log_results(dynamic_analysis_results)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         log_conversation_history(conversation_history)
+        log_results(generic_analysis_results)
+        log_results(static_analysis_results)
+        # log_results(dynamic_analysis_results)
         return {'error': str(e)}
-    
-    print('\n\nResults\n')
-    log_results(str(generic_analysis_results))
-    log_results(str(static_analysis_results))
 
 
 if __name__ == '__main__':

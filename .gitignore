@@ -166,3 +166,4 @@ backup/
 *.sh
 evaluate.py
 *.csv
+logs/
