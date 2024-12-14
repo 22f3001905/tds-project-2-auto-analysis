@@ -253,8 +253,8 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
         # Log LLM Costs
         monthly_cost = output.get('monthlyCost')
         if monthly_cost is not None:
-            logging.info(f"Monthly Cost: {monthly_cost:.4f}")
-            logging.info(f"Percentage Used: {(monthly_cost / 5) * 100:.4f}%")
+            logging.info(f"Monthly Cost: ${monthly_cost:.4f}")
+            logging.info(f"Percentage Used: {(monthly_cost / 5) * 100:.2f}%")
         
         assistant_message = output['choices'][0]['message']
         conversation_history.append(assistant_message)
@@ -713,7 +713,7 @@ def main():
             }
         },
     ]
-    
+    # generic_analysis_function_call = chat('Invalid function call! Try to use the generic_analysis function.', **params)['function_call']
     try:
         params = {
             'api_key': api_key, 
@@ -721,31 +721,28 @@ def main():
             'function_descriptions': function_descriptions
         }
 
-        # TODO: Remove this before deployment.
-        print(chat('List all the functions that you can call?', **params)['content'])
-        print('---'*10)
-
         # Generic Analysis
         generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
         
         generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
+        
+        # TODO: Retry!
+        if not generic_analysis_function_call:
+            logging.error("Invalid function call")
 
         try:
-            generic_analysis_results = handle_function_call(generic_analysis_function_call, conversation_history, data=df)
+            generic_analysis_results = handle_function_call(generic_analysis_function_call, 
+            conversation_history, data=df)
         except Exception as e:
             logging.error('Error occurred when handling generic_analysis.', e)
         
-        print('---'*10)
+        if generic_analysis_results and 'correlation_analysis' in generic_analysis_results:
+            corr_chart = generic_analysis_results['correlation_analysis'].get('chart')
+            if corr_chart:
+                chat(f'{corr_chart} is the chart for the correlation matrix.', **params, base64_image=encode_image(corr_chart))
 
-        print(chat('Write a short description about the dataset and the generic analysis result.', **params))
-        print('---'*10)
 
-        print(chat('This is the chart for the covariance matrix.', **params, base64_image=encode_image(generic_analysis_results['correlation_analysis']['chart']))['content'])
-        print('---'*10)
-
-        breakpoint()
-
-        # Static Analysis Function Calls
+        # Static Analysis
         static_analysis_functions = [
             'regression_analysis', 
             'classification_analysis', 
@@ -772,28 +769,32 @@ def main():
         for _ in range(2):
             static_analysis_function_call = chat(static_analysis_prompt, **params)['function_call']
 
+            # TODO: Retry!
             if not static_analysis_function_call:
-                print('Function call was not called!')
+                logging.error('Invalid function call!')
                 break
 
             analysis_func_name = static_analysis_function_call.get('name')
 
-            # TODO: Maybe retry the prompt.
+            # TODO: Retry!
             if analysis_func_name in static_analysis_results:
+                logging.error(f'Same function called again: {analysis_func_name}')
                 break
             
             try:
                 result = handle_function_call(static_analysis_function_call, conversation_history, data=df)
                 if result:
                     static_analysis_results[analysis_func_name] = result
-                    print(chat(f'This is the chart for visualizing {analysis_func_name}. Use this and the analysis results computed earlier to write a short description.', **params, base64_image=encode_image(static_analysis_results[analysis_func_name]['chart'])))
+                    analysis_chart = result['chart']
+
+                    chat(f'{analysis_chart} is the chart for visualizing {analysis_func_name}.', **params, base64_image=encode_image(analysis_chart))
             except Exception as e:
-                logging.error(f'Error occurred in handling static_analysis ({analysis_func_name}):', e)
+                logging.error(f'Error occurred in handling static_analysis function {analysis_func_name}:', e)
                 continue
 
-            print('---'*10)
 
-        # TODO: Dynamic Analysis: Use tenacity library to retry results.
+        # TODO: Use tenacity library to retry results.
+        # Dynamic Analysis
         available_libraries = [
             "geopy",
             "numpy",
@@ -824,6 +825,7 @@ def main():
         dynamic_analysis_results = {}
         generated_function = chat(dynamic_prompt, **params)['content']
 
+        # Remove additional formatting from the LLM's output.
         if generated_function.startswith("```python"):
             generated_function = generated_function.replace("```python", "", 1).strip().rstrip("```").strip()
         
@@ -831,6 +833,7 @@ def main():
             generated_function = generated_function[3:-3].strip()
 
         print(generated_function)
+        # TODO: Remove breakpoint.
         breakpoint()
 
         try:
@@ -841,26 +844,18 @@ def main():
 
             if 'dynamic_analysis' in execution_env:
                 dynamic_analysis = execution_env['dynamic_analysis']
-                dynamic_analysis_results = dynamic_analysis(df.select_dtypes(include=['float64', 'int64']).copy())
+                numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
+                dynamic_analysis_results = dynamic_analysis(numeric_df)
             else:
-                # TODO: Retry here!
+                # TODO: Retry!
                 logging.error('Could not find dynamic_analysis function.')
         except SyntaxError as e:
             logging.error("Syntax error in generated code for dynamic analysis:", e)
         except Exception as e:
-            logging.exception("An unexpected error occurred during execution of dynamic code:", e)
-
-        print(dynamic_analysis_results)
+            logging.exception("An unexpected error occurred during execution of dynamic_analysis:", e)
 
         if dynamic_analysis_results:
-            print(chat(f"""
-            Here are the results from the dynamic analysis you performed:
-            {str(dynamic_analysis_results)[:500]}
-
-            If something new was discovered, then write a short description about the results obtained.
-            """, **params))
-
-            print('---'*10)
+            chat(f"Here are the results from the dynamic analysis you performed: {str(dynamic_analysis_results)[:500]}", **params)
 
         # Narrate a Story
         narrative_prompt = f"""\
@@ -873,24 +868,20 @@ def main():
         * The implications of your findings (i.e. what to do with the insights)
 
         Note: Output the story in valid Markdown.
-        Note: Use the things learned in the context window.
-        Note: Add all the charts to the correct locations in the markdown.
+        Note: Use the things learned in the entire context window.
+        Note: Include ALL the charts you have seen in the correct sections of the markdown.
         """
 
         story = chat(narrative_prompt, **params)['content']
+
+        # TODO: Retry! (If no charts in the story).
+
         write_file('README.md', story)
 
-        log_conversation_history(conversation_history)
-        log_results(generic_analysis_results)
-        log_results(static_analysis_results)
-        log_results(dynamic_analysis_results)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        log_conversation_history(conversation_history)
-        log_results(generic_analysis_results)
-        log_results(static_analysis_results)
-        log_results(dynamic_analysis_results)
-        return {'error': str(e)}
+    
+    log_conversation_history(conversation_history)
 
 
 if __name__ == '__main__':
