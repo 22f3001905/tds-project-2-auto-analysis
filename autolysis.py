@@ -281,6 +281,15 @@ def regression_analysis(data, target):
     X = data.drop(target, axis=1)
     y = data[target]
 
+    if not pd.api.types.is_numeric_dtype(y):
+        y = pd.to_numeric(y, errors="coerce")
+        if y.isna().sum() > y.shape[0] / 2:
+            logging.warning("y is not a valid target.")
+            return None
+    
+    # Imputing target
+    y = y.fillna(y.mean())
+
     X = X.select_dtypes(include=['number'])
     if X.empty:
         logging.warning("No numeric columns found.")
@@ -324,11 +333,15 @@ def classification_analysis(data, label):
     X = data.drop(label, axis=1)
     y = data[label]
 
-    X = X.select_dtypes(include=['number'])
     if y.nunique() > 10:
         logging.warning('y is not a valid label.')
         return None
+    
+    # Imputing labels
+    most_frequent = y.mode().iloc[0]
+    y = y.fillna(most_frequent)
 
+    X = X.select_dtypes(include=['number'])
     if X.empty:
         logging.warning("No numeric columns found.")
         return None
@@ -358,7 +371,10 @@ def classification_analysis(data, label):
     }
 
 def geospatial_analysis(data, latitude, longitude):
+    """Performs geospacial analysis."""
+
     df = data[[latitude, longitude]].copy()
+    df = df.dropna(axis=0)
 
     city_center = (df[latitude].mean(), df[longitude].mean())
     chart_name = plot_map(df, city_center, latitude, longitude)
@@ -650,7 +666,7 @@ def main():
                 "properties": {
                     "label": {
                         "type": "string",
-                        "description": "The column name of the label. Eg. 'has_disease'",
+                        "description": "The column name of the label. Eg. 'has_disease'. Important: Valid label column has less than or equal to 10 unique values.",
                     },
                 },
                 "required": ["label"]
@@ -767,12 +783,13 @@ def main():
                 break
             
             try:
-                static_analysis_results[analysis_func_name] = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+                result = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+                if result:
+                    static_analysis_results[analysis_func_name] = result
+                    print(chat(f'This is the chart for visualizing {analysis_func_name}. Use this and the analysis results computed earlier to write a short description.', **params, base64_image=encode_image(static_analysis_results[analysis_func_name]['chart'])))
             except Exception as e:
                 logging.error(f'Error occurred in handling static_analysis ({analysis_func_name}):', e)
                 continue
-
-            print(chat(f'This is the chart for visualizing {analysis_func_name}. Use this and the analysis results computed earlier to write a short description.', **params, base64_image=encode_image(static_analysis_results[analysis_func_name]['chart'])))
 
             print('---'*10)
 

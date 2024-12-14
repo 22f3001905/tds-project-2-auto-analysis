@@ -1,50 +1,42 @@
-# Analysis of Media Ratings Dataset
+# Analysis of Media Dataset
 
-## Dataset Overview
-The dataset comprises 2,652 entries of various media titles, including movies, each characterized by attributes such as the date of release, language, type, title, contributors, and ratings in three categories: overall, quality, and repeatability. This rich dataset allows for a multifaceted exploration of audience perceptions and trends in media consumption.
+## Overview of the Dataset
 
-## Analysis Conducted
-I undertook a series of analyses to derive insights from the data. These analyses included:
+The dataset comprises 2,652 entries detailing various media content, including attributes such as date, language, type, title, contributors, and ratings (overall, quality, repeatability). The primary focus is on understanding how these features relate to viewer satisfaction.
 
-1. **Generic Analysis**: I assessed missing values, summary statistics, unique value counts, and performed correlation analysis to understand relationships between numerical features.
-   
-2. **Time Series Analysis**: I examined the trends over time concerning overall ratings, identifying patterns in audience sentiments from 2006 to 2024.
+## Analysis Carried Out
 
-3. **Classification Analysis**: I predicted repeatability ratings and evaluated the model performance using metrics like accuracy, precision, and recall.
+To explore the dataset, a series of analytical steps were undertaken:
 
-4. **Dynamic Analysis**: I analyzed the dataset for missing values, skewness, and correlations among variables while encoding categorical data.
+1. **Generic Analysis:** This provided a foundational understanding of the dataset, revealing eight columns, including missing values, unique counts, and the types of data within each column. Notably, overall ratings ranged from 1 to 5, with a mean of approximately 3.05.
 
-### Visualizations
-#### Correlation Heatmap
-![Correlation Heatmap](chart_1.png)
+   ![Covariance Matrix Chart](chart_1.png)
 
-#### Time Series Visualization
-![Time Series of Overall Ratings](chart_2.png)
+2. **Regression Analysis:** A linear regression was performed with overall ratings as the target variable, using quality and repeatability as predictors. The resulting R² score of 0.745 indicated a strong relationship, suggesting that around 74.5% of the variance in overall ratings could be attributed to these features.
 
-#### Classification Confusion Matrix
-![Classification Confusion Matrix](chart_3.png)
+   ![Regression Analysis Chart](chart_2.png)
+
+3. **Time Series Analysis:** This analysis focused on overall ratings over time, determining that the series is stationary, which means its statistical properties do not change over time. This conclusion was based on the ADF statistic and its comparison to critical values, ensuring consistency in the data.
+
+   ![Time Series Analysis Chart](chart_3.png)
+
+4. **Dynamic Analysis:** Lastly, I conducted a dynamic analysis that examined skewness, kurtosis, and correlation strictly among the numerical variables. Notable observations included a positive skewness in repeatability and strong correlations between overall ratings and quality.
 
 ## Insights Discovered
-The analysis unveiled several key insights:
 
-- **Completeness of Data**: There were no missing values in any columns, indicating a robust dataset ready for analysis.
-  
-- **Correlation Insights**: The strong correlation between overall and quality ratings (0.83) suggests that improving content quality could elevate audience perceptions, as these ratings are closely intertwined.
+The multiple analyses unveiled several critical insights:
 
-- **Trends Over Time**: The time series analysis showed fluctuations in overall ratings, with a subtle increase in recent years, indicating a potential resurgence in audience engagement or higher quality releases.
-
-- **Classification Challenges**: The classification analysis revealed solid predictive ability for repeatability levels but indicated difficulties in accurately predicting mid-range ratings.
+- **Quality's Impact:** Quality ratings were strongly correlated with overall ratings, demonstrating that improvements in media quality are likely to enhance viewer satisfaction significantly.
+- **Repeatability's Role:** While repeatability showed moderate influence, its positive skewness suggests that most media content tends to have high repeatability, which may be perceived positively by viewers.
+- **Stationarity of Ratings:** The stationary nature of overall ratings over time indicates that past trends can reliably forecast future ratings, providing a stable foundation for continuous improvement strategies.
 
 ## Implications of Findings
-The insights derived from this analysis have several implications:
 
-1. **Targeted Quality Improvement**: Media organizations should focus on enhancing quality content, as it is likely to improve overall ratings and audience satisfaction collectively.
+The insights gained from this comprehensive analysis can guide strategic decisions:
 
-2. **Monitoring Trends**: Continuous monitoring of audience ratings over time can provide valuable feedback to creators and marketers, helping them align content offerings with emerging audience preferences.
+- **Focus on Quality:** Media producers should prioritize enhancing the quality of their content, as this is likely to resonate positively with audiences and drive higher overall ratings.
+- **Monitor Repeatability:** Understanding the factors behind repeatability can help creators maintain viewer interest in reviewing or rewatching content, potentially leading to greater engagement.
+- **Data-Driven Decisions:** The stationary nature of the overall ratings encourages a data-driven approach to forecasting audience reception for future media projects.
 
-3. **Refining Targeting Strategies**: Given the classification challenges, further modeling could improve accuracy, enabling more strategic marketing efforts based on predicted repeatability ratings.
-
-4. **Data-Driven Decision Making**: The findings suggest adopting a data-driven approach to media development and marketing strategies, utilizing relationship insights to inform future projects.
-
-In conclusion, the analysis not only highlighted the dataset's integrity and the value of its information but also pointed to actionable strategies for improving content and enhancing audience engagement in the media landscape.
+By leveraging these insights, media organizations can make informed decisions that align with viewer preferences, ultimately enhancing content relevance and satisfaction.
 
