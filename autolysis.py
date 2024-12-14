@@ -198,10 +198,12 @@ def handle_function_call(function_call, conversation_history, data):
 def chat(prompt, api_key, conversation_history, function_descriptions, model='gpt-4o-mini', base64_image=None):
     """Send a chat prompt to the LLM and return the response."""
 
-    user_message = [{
-        'role': 'user',
-        'content': prompt
-    }]
+    user_message = [
+        {
+            'role': 'user',
+            'content': prompt
+        }
+    ]
 
     if base64_image:
         content = [
@@ -220,7 +222,12 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
         
         user_message[0]['content'] = content
 
-    conversation_history += user_message
+    conversation_history += [
+        {
+            'role': 'user',
+            'content': prompt
+        }
+    ]
 
     url = 'https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
     headers = {
@@ -247,8 +254,7 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
         monthly_cost = output.get('monthlyCost')
         if monthly_cost is not None:
             logging.info(f"Monthly Cost: {monthly_cost:.4f}")
-            # TODO: Change this to $5.
-            logging.info(f"Percentage Used: {(monthly_cost / 2) * 100:.4f}%")
+            logging.info(f"Percentage Used: {(monthly_cost / 5) * 100:.4f}%")
         
         assistant_message = output['choices'][0]['message']
         conversation_history.append(assistant_message)
@@ -367,13 +373,13 @@ def geospatial_analysis(data, latitude, longitude):
         'chart': chart_name
     }
 
-def time_series_analysis(data, date_column, numerical_column):
+def time_series_analysis(data, date_column, numerical_column, date_format):
     """Perform time series analysis."""
 
     df = data[[date_column, numerical_column]].copy()
     df = df.dropna(axis=0)
 
-    df[date_column] = pd.to_datetime(df[date_column])
+    df[date_column] = pd.to_datetime(df[date_column], format=date_format, errors='coerce')
     df = df.set_index(date_column).sort_index()
 
     ts_data = df[numerical_column]
@@ -492,11 +498,11 @@ def plot_time_series(ts_data, num_col):
     selected_period = 'D'
 
     for period in time_periods:
-        resampled_data = ts_data.resample(period).mean()
+        resampled_data = ts_data.resample(period).mean().dropna()
         if resampled_data.shape[0] >= 20:
             selected_period = period
 
-    resampled_data = ts_data.resample(selected_period).mean()
+    resampled_data = ts_data.resample(selected_period).mean().dropna()
 
     plt.figure(figsize=(20, 6), dpi=dpi)
     
@@ -663,9 +669,13 @@ def main():
                     "numerical_column": {
                         "type": "string",
                         "description": "The column name of the numerical column. Eg. 'price'",
+                    },
+                    "date_format": {
+                        "type": "string",
+                        "description": f"The format of the date to parse. Eg. '%Y-%m-%d' for 2024-03-15, '%d-%b-%y' for 30-Sep-24, and '%Y' for 2008 (only year). The function uses pd.to_datetime method, it requires a format argument.",
                     }
                 },
-                "required": ["date_column", "numerical_column"]
+                "required": ["date_column", "numerical_column", "date_format"]
             }
         },
         {
@@ -703,14 +713,21 @@ def main():
         generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
         
         generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
-        generic_analysis_results = handle_function_call(generic_analysis_function_call, conversation_history, data=df)
+
+        try:
+            generic_analysis_results = handle_function_call(generic_analysis_function_call, conversation_history, data=df)
+        except Exception as e:
+            logging.error('Error occurred when handling generic_analysis.', e)
+        
         print('---'*10)
 
         print(chat('Write a short description about the dataset and the generic analysis result.', **params))
         print('---'*10)
 
-        print(chat('This is the chart for the covariance matrix.', **params, base64_image=encode_image(generic_analysis_results['correlation_analysis']['chart'])))
+        print(chat('This is the chart for the covariance matrix.', **params, base64_image=encode_image(generic_analysis_results['correlation_analysis']['chart']))['content'])
         print('---'*10)
+
+        breakpoint()
 
         # Static Analysis Function Calls
         static_analysis_functions = [
@@ -744,68 +761,89 @@ def main():
                 break
 
             analysis_func_name = static_analysis_function_call.get('name')
+
+            # TODO: Maybe retry the prompt.
+            if analysis_func_name in static_analysis_results:
+                break
             
-            static_analysis_results[analysis_func_name] = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+            try:
+                static_analysis_results[analysis_func_name] = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+            except Exception as e:
+                logging.error(f'Error occurred in handling static_analysis ({analysis_func_name}):', e)
+                continue
 
             print(chat(f'This is the chart for visualizing {analysis_func_name}. Use this and the analysis results computed earlier to write a short description.', **params, base64_image=encode_image(static_analysis_results[analysis_func_name]['chart'])))
 
             print('---'*10)
 
         # TODO: Dynamic Analysis: Use tenacity library to retry results.
-        # available_libraries = [
-        #     "geopy",
-        #     "numpy",
-        #     "pandas",
-        #     "scikit-learn",
-        #     "scipy",
-        #     "statsmodels",
-        # ]
+        available_libraries = [
+            "geopy",
+            "numpy",
+            "pandas",
+            "scikit-learn",
+            "scipy",
+            "statsmodels",
+        ]
+        ordered_list_libraries = "\n".join([f'{i+1}. {library_name}' for (i, library_name) in enumerate(available_libraries)])
 
-        # ordered_list_libraries = "\n".join([f'{i+1}. {library_name}' for (i, library_name) in enumerate(available_libraries)])
-
-        # dynamic_prompt = f"""\
-        # Write a Python function to analyze the dataset. Name the function `dynamic_analysis(data)` where data is a DataFrame object.
+        dynamic_prompt = f"""\
+        Write a Python function to perform an analysis on the dataset. Name the function `dynamic_analysis(data)` where data is a DataFrame object.
         
-        # Follow ALL the following instructions carefully:
-        # * The analysis should be distinct from the ones you have performed earlier. 
-        # * The function should return relevant analysis results as a Python dictionary.
-        # * The function should handle missing values in `data`.
-        # * DO NOT ouput the entire DataFrame object.
+        Follow ALL the following instructions carefully:
+        * The analysis should be distinct from the ones you have performed earlier.
+        * The function should return relevant analysis results as a Python dictionary. Keep the output results small in size.
+        * Limit the dataset to only numerical columns.
+        * The function should handle missing values in `data`.
+        * DO NOT ouput the entire DataFrame object.
 
-        # Here is a list of python libraries that you are allowed to use:
-        # {ordered_list_libraries}
+        Here is a list of python libraries that you are allowed to use:
+        {ordered_list_libraries}
 
-        # Ouput ONLY the Python function and nothing else.
-        # """
+        Ouput ONLY the Python function and nothing else.
+        """
 
-        # execution_env = {}
-        # dynamic_analysis_results = None
-        # generated_function = chat(dynamic_prompt, **params)['content']
+        execution_env = {}
+        dynamic_analysis_results = {}
+        generated_function = chat(dynamic_prompt, **params)['content']
 
-        # print(generated_function)
-        # breakpoint()
+        if generated_function.startswith("```python"):
+            generated_function = generated_function.replace("```python", "", 1).strip().rstrip("```").strip()
+        
+        if generated_function.startswith("```"):
+            generated_function = generated_function[3:-3].strip()
 
-        # try:
-        #     ast.parse(generated_function)
-        #     logging.info("Code parsed successfully.")
+        print(generated_function)
+        breakpoint()
 
-        #     exec(generated_function, execution_env)
+        try:
+            ast.parse(generated_function)
+            logging.info("Code parsed successfully.")
 
-        #     if 'dynamic_analysis' in execution_env:
-        #         dynamic_analysis = execution_env['dynamic_analysis']
-        #         dynamic_analysis_results = dynamic_analysis(df)
-        # except SyntaxError as e:
-        #     logging.error("Syntax error in generated code:", e)
-        # except Exception as e:
-        #     logging.exception("An unexpected error occurred during execution:", e)
+            exec(generated_function, execution_env)
 
-        # print(chat(f"""
-        # Here are the results from the dynamic analysis you performed: {dynamic_analysis_results}
+            if 'dynamic_analysis' in execution_env:
+                dynamic_analysis = execution_env['dynamic_analysis']
+                dynamic_analysis_results = dynamic_analysis(df.select_dtypes(include=['float64', 'int64']).copy())
+            else:
+                # TODO: Retry here!
+                logging.error('Could not find dynamic_analysis function.')
+        except SyntaxError as e:
+            logging.error("Syntax error in generated code for dynamic analysis:", e)
+        except Exception as e:
+            logging.exception("An unexpected error occurred during execution of dynamic code:", e)
 
-        # Write a short description about the results obtained.
-        # """, **params))
+        print(dynamic_analysis_results)
 
-        # print('---'*10)
+        if dynamic_analysis_results:
+            print(chat(f"""
+            Here are the results from the dynamic analysis you performed:
+            {str(dynamic_analysis_results)[:500]}
+
+            If something new was discovered, then write a short description about the results obtained.
+            """, **params))
+
+            print('---'*10)
 
         # Narrate a Story
         narrative_prompt = f"""\
@@ -813,13 +851,13 @@ def main():
 
         Describe the following:
         * The dataset you received, briefly
-        * The analysis you carried out
+        * The analysis you carried out, with charts
         * The insights you discovered
         * The implications of your findings (i.e. what to do with the insights)
 
         Note: Output the story in valid Markdown.
         Note: Use the things learned in the context window.
-        Note: Add charts in the correct locations in the markdown.
+        Note: Add all the charts to the correct locations in the markdown.
         """
 
         story = chat(narrative_prompt, **params)['content']
@@ -828,13 +866,13 @@ def main():
         log_conversation_history(conversation_history)
         log_results(generic_analysis_results)
         log_results(static_analysis_results)
-        # log_results(dynamic_analysis_results)
+        log_results(dynamic_analysis_results)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         log_conversation_history(conversation_history)
         log_results(generic_analysis_results)
         log_results(static_analysis_results)
-        # log_results(dynamic_analysis_results)
+        log_results(dynamic_analysis_results)
         return {'error': str(e)}
 
 
