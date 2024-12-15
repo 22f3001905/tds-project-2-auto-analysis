@@ -34,6 +34,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 
 from dotenv import load_dotenv
@@ -130,7 +131,7 @@ def write_file(file_name, text_content, title=None):
             if text_content.startswith("```markdown"):
                 text_content = text_content.replace("```markdown", "", 1).strip().rstrip("```").strip()
 
-            f.write(text_content + "\n\n")
+            f.write(text_content + "\n")
     except Exception as e:
         logging.error(f"Error writing to file '{file_name}': {e}")
 
@@ -248,7 +249,10 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
 
         if output.get('error'):
             logging.error(f"LLM Error: {output}")
-            return None
+            return {
+                'content': None,
+                'function_call': None
+            }
 
         # Log LLM Costs
         monthly_cost = output.get('monthlyCost')
@@ -268,10 +272,16 @@ def chat(prompt, api_key, conversation_history, function_descriptions, model='gp
         }
     except requests.exceptions.RequestException as e:
         logging.error(f"HTTP Request failed: {e}")
-        return None
+        return {
+            'content': None,
+            'function_call': None
+        }
     except KeyError as e:
         logging.error(f"Unexpected response format: {e}")
-        return None
+        return {
+            'content': None,
+            'function_call': None
+        }
 
 
 # Static Analysis Functions
@@ -713,7 +723,7 @@ def main():
             }
         },
     ]
-    # generic_analysis_function_call = chat('Invalid function call! Try to use the generic_analysis function.', **params)['function_call']
+    
     try:
         params = {
             'api_key': api_key, 
@@ -723,13 +733,13 @@ def main():
 
         # Generic Analysis
         generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
-        
         generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
         
-        # TODO: Retry!
         if not generic_analysis_function_call:
             logging.error("Invalid function call")
+            generic_analysis_function_call = chat('Invalid function call! Try to use the generic_analysis function.', **params)['function_call']
 
+        generic_analysis_results = None
         try:
             generic_analysis_results = handle_function_call(generic_analysis_function_call, 
             conversation_history, data=df)
@@ -739,7 +749,7 @@ def main():
         if generic_analysis_results and 'correlation_analysis' in generic_analysis_results:
             corr_chart = generic_analysis_results['correlation_analysis'].get('chart')
             if corr_chart:
-                chat(f'{corr_chart} is the chart for the correlation matrix.', **params, base64_image=encode_image(corr_chart))
+                chat(f'{corr_chart} is the chart for the correlation matrix. You will need to insert this in the final output.', **params, base64_image=encode_image(corr_chart))
 
 
         # Static Analysis
@@ -754,14 +764,14 @@ def main():
 
         static_analysis_prompt = f"""\
         Call the most appropriate analysis function from the given list below with the correct parameter.
-        
+
         You have to figure out the correct parameters for the function call.
 
         Analysis functions:
         {ordered_list_analyses}
 
         Note: If an analysis from the list is already performed don't repeat it, select a different one.
-        Note: Make use of prior analyses to make your choice.
+        Note: Make use of the knowledge of prior analyses to make your choice.
         """
 
         static_analysis_results = {}
@@ -769,14 +779,12 @@ def main():
         for _ in range(2):
             static_analysis_function_call = chat(static_analysis_prompt, **params)['function_call']
 
-            # TODO: Retry!
             if not static_analysis_function_call:
                 logging.error('Invalid function call!')
-                break
+                continue
 
             analysis_func_name = static_analysis_function_call.get('name')
 
-            # TODO: Retry!
             if analysis_func_name in static_analysis_results:
                 logging.error(f'Same function called again: {analysis_func_name}')
                 break
@@ -787,13 +795,12 @@ def main():
                     static_analysis_results[analysis_func_name] = result
                     analysis_chart = result['chart']
 
-                    chat(f'{analysis_chart} is the chart for visualizing {analysis_func_name}.', **params, base64_image=encode_image(analysis_chart))
+                    chat(f'{analysis_chart} is the chart for visualizing {analysis_func_name}. You will need to insert this in the final output.', **params, base64_image=encode_image(analysis_chart))
             except Exception as e:
                 logging.error(f'Error occurred in handling static_analysis function {analysis_func_name}:', e)
                 continue
 
 
-        # TODO: Use tenacity library to retry results.
         # Dynamic Analysis
         available_libraries = [
             "geopy",
@@ -833,8 +840,6 @@ def main():
             generated_function = generated_function[3:-3].strip()
 
         print(generated_function)
-        # TODO: Remove breakpoint.
-        breakpoint()
 
         try:
             ast.parse(generated_function)
@@ -847,7 +852,6 @@ def main():
                 numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
                 dynamic_analysis_results = dynamic_analysis(numeric_df)
             else:
-                # TODO: Retry!
                 logging.error('Could not find dynamic_analysis function.')
         except SyntaxError as e:
             logging.error("Syntax error in generated code for dynamic analysis:", e)
@@ -874,7 +878,11 @@ def main():
 
         story = chat(narrative_prompt, **params)['content']
 
-        # TODO: Retry! (If no charts in the story).
+        image_pattern = r'!\[.*?\]\(.*?\)'
+        charts_included = bool(re.search(image_pattern, story))
+        if not charts_included:
+            logging.error('Chart not included in the output.')
+            story = chat('Please insert charts in the above data story. Output in valid markdown.', **params)['content']
 
         write_file('README.md', story)
 

@@ -1,40 +1,36 @@
-# Story of Happiness Analysis
+# Story of the Happiness Dataset Analysis
 
-## Introduction to the Dataset
-The dataset "happiness.csv" spans several years and includes happiness indicators for 165 countries. It contains 2363 entries with 11 columns, featuring metrics like "Life Ladder," "Log GDP per capita," "Social support," "Generosity," and more. These metrics aim to quantify the subjective well-being and perceived happiness of individuals across different regions.
+## Dataset Overview
+The dataset provided, `happiness.csv`, consists of various measures of happiness and well-being across different countries and years. It contains 2363 entries and 11 columns, including indicators such as "Life Ladder," "Log GDP per capita," "Social support," and more. Each row corresponds to a specific country in a specific year, making it a valuable resource for understanding global happiness trends.
 
-## Analysis Carried Out
-The analysis conducted on this dataset involved several distinct approaches:
+## Analysis Conducted
+Three distinct analyses were performed on the dataset:
 
-1. **Generic Analysis**: This initial exploration provided a comprehensive overview of the dataset's structure, including unique values, summary statistics, missing values, and the correlation between variables.
+1. **Generic Analysis**:
+   This initial analysis provided an overview of the dataset, including information on missing values, summary statistics, and data types. One of the key findings was that several columns had missing values, particularly "Log GDP per capita" and "Generosity." 
 
-   ![Covariance Matrix Chart](chart_1.png)
+   ![Correlation Matrix](chart_1.png)
 
-2. **Regression Analysis**: To understand the relationship between predictors and the "Life Ladder" (happiness score), a regression analysis revealed that economic (Log GDP per capita) and social factors (Social support) significantly influence happiness levels. The regression model achieved an R² score of approximately 0.76.
+2. **Regression Analysis**:
+   To explore the predictors of happiness, a regression analysis was conducted with "Life Ladder" as the target variable. The analysis revealed significant relationships between happiness and various features, notably "Log GDP per capita" and "Social support." The R² score was 0.7589, indicating that the model explains about 75.89% of the variance in happiness levels.
 
-   ![Regression Analysis Chart](chart_2.png)
+   ![Regression Analysis Visualization](chart_2.png)
 
-3. **Time Series Analysis**: This analysis assessed the trends of happiness scores over the years. It confirmed the stationarity of "Life Ladder" scores, indicating no long-term trend but consistent happiness levels across years.
+3. **Time Series Analysis**:
+   Finally, a time series analysis was performed focusing on the "year" column against "Life Ladder." The Augmented Dickey-Fuller (ADF) test results showed that the time series is stationary, allowing for reliable trends and patterns over time.
 
-   ![Time Series Analysis Chart](chart_3.png)
+   ![Time Series Analysis Visualization](chart_3.png)
 
-4. **Dynamic Analysis**: A focused examination of numerical columns provided insights into central tendencies, skewness, and kurtosis, revealing the distribution characteristics of the happiness metrics.
+4. **Dynamic Analysis**:
+   A dynamic analysis using Principal Component Analysis (PCA) was performed to reduce dimensionality and uncover underlying structures in the data. The analysis found that the first principal component explained 65.68% of the variance, with components reflecting various aspects of happiness.
 
 ## Insights Discovered
-From the analyses, several critical insights emerged:
-
-- **Economic Correlation**: Strong correlations were established between happiness levels and economic factors. The mean "Life Ladder" score of 5.47 suggests moderate happiness, closely linked to a mean "Log GDP per capita" of 9.36.
-- **Distribution Characteristics**: The dynamic analysis highlighted potential skewness in the data, suggesting that while some countries experience high happiness scores, others may lag.
-- **Stable Happiness Levels**: The time series analysis indicated that happiness levels have remained stable over the years, providing a consistent framework for understanding global happiness.
+- The significant impact of economic indicators (like GDP) and social support on happiness levels suggests a strong interrelation between these metrics and overall well-being.
+- The stationary nature of the aggregated happiness data over time could enable policymakers to identify specific trends and the effectiveness of interventions.
 
 ## Implications of Findings
-These findings carry significant implications for policymakers and researchers:
+- **Policy Development**: Governments and organizations should focus on improving economic conditions and social support systems as these were closely linked to higher happiness levels.
+- **Targeted Interventions**: Programs aimed at enhancing personal freedom, reducing corruption, and increasing healthy life expectancy could lead to improved happiness outcomes.
+- **Future Research**: The PCA findings prompt further research to explore other factors influencing happiness that may not be captured in the dataset, laying the groundwork for more comprehensive studies.
 
-1. **Targeted Interventions**: Understanding the key contributors to happiness can aid governments in devising targeted strategies aimed at improving economic conditions and social support, ultimately raising the happiness scores of their citizens.
-
-2. **Monitoring Trends**: The stable nature of happiness levels suggests that while immediate changes may not significantly alter happiness, long-term policies focused on economic and social support might yield positive results over time.
-
-3. **Future Research**: The identified skewness in happiness distribution could prompt further investigation into the outliers, providing deeper insights into what contributes to exceptionally high or low happiness scores in specific countries.
-
-In conclusion, the comprehensive analysis of the happiness dataset not only enhances our understanding of the driving factors behind happiness but also equips policymakers with the necessary information to improve well-being across nations.
-
+The analysis of the happiness dataset resulted in actionable insights that can guide policy initiatives and foster discussions around well-being, ultimately striving to improve the quality of life globally.
