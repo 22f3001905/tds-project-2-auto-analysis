@@ -618,16 +618,11 @@ def plot_map(df, city_center, lat, lng):
 
 # Log Functions (Debug Code + LLM Outputs)
 def log_conversation_history(conversation_history):
+    """Log LLM conversation history to a .log file for debugging."""
     try:
-        write_file('logs/conversation_history.log', str(conversation_history), title='Conversation History')
+        write_file('conversation_history.log', str(conversation_history), title='Conversation History')
     except Exception as e:
         logging.error(f"Failed to log conversation history: {e}")
-
-def log_results(result):
-    try:
-        write_file('logs/results.log', str(result))
-    except Exception as e:
-        logging.error(f"Failed to log results: {e}")
 
 
 def main():
