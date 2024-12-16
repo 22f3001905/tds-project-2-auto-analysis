@@ -15,6 +15,7 @@
 #     "selenium",
 #     "statsmodels",
 #     "tabulate",
+#     "tenacity",
 # ]
 # ///
 
@@ -43,6 +44,7 @@ import chardet
 import numpy as np
 import pandas as pd
 import requests
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -625,6 +627,10 @@ def log_conversation_history(conversation_history):
         logging.error(f"Failed to log conversation history: {e}")
 
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
+@retry(stop=stop_after_attempt(MAX_RETRIES), wait=wait_fixed(RETRY_DELAY))
 def main():
     # SETUP
     sns.set_theme('notebook')
@@ -719,173 +725,172 @@ def main():
         },
     ]
     
+    params = {
+        'api_key': api_key, 
+        'conversation_history': conversation_history, 
+        'function_descriptions': function_descriptions
+    }
+
+    # Generic Analysis
+    generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
+    generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
+    
+    if not generic_analysis_function_call:
+        logging.error("Invalid function call")
+        generic_analysis_function_call = chat('Invalid function call! Try to use the generic_analysis function.', **params)['function_call']
+
+    generic_analysis_results = None
     try:
-        params = {
-            'api_key': api_key, 
-            'conversation_history': conversation_history, 
-            'function_descriptions': function_descriptions
-        }
-
-        # Generic Analysis
-        generic_analysis_prompt = f'You are given a file: {dataset_file}. I have create a local DataFrame object, perform a generic analysis using a function call.'
-        generic_analysis_function_call = chat(generic_analysis_prompt, **params)['function_call']
-        
-        if not generic_analysis_function_call:
-            logging.error("Invalid function call")
-            generic_analysis_function_call = chat('Invalid function call! Try to use the generic_analysis function.', **params)['function_call']
-
-        generic_analysis_results = None
-        try:
-            generic_analysis_results = handle_function_call(generic_analysis_function_call, 
-            conversation_history, data=df)
-        except Exception as e:
-            logging.error('Error occurred when handling generic_analysis.', e)
-        
-        if generic_analysis_results and 'correlation_analysis' in generic_analysis_results:
-            corr_chart = generic_analysis_results['correlation_analysis'].get('chart')
-            if corr_chart:
-                chat(f'{corr_chart} is the chart for the correlation matrix. You will need to insert this in the final output.', **params, base64_image=encode_image(corr_chart))
-
-
-        # Static Analysis
-        static_analysis_functions = [
-            'regression_analysis', 
-            'classification_analysis', 
-            'geospatial_analysis', 
-            'time_series_analysis'
-        ]
-
-        ordered_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(static_analysis_functions)])
-
-        static_analysis_prompt = f"""\
-        Call the most appropriate analysis function from the given list below with the correct parameter.
-
-        You have to figure out the correct parameters for the function call.
-
-        Analysis functions:
-        {ordered_list_analyses}
-
-        Note: If an analysis from the list is already performed don't repeat it, select a different one.
-        Note: Make use of the knowledge of prior analyses to make your choice.
-        """
-
-        static_analysis_results = {}
-
-        for _ in range(2):
-            static_analysis_function_call = chat(static_analysis_prompt, **params)['function_call']
-
-            if not static_analysis_function_call:
-                logging.error('Invalid function call!')
-                continue
-
-            analysis_func_name = static_analysis_function_call.get('name')
-
-            if analysis_func_name in static_analysis_results:
-                logging.error(f'Same function called again: {analysis_func_name}')
-                break
-            
-            try:
-                result = handle_function_call(static_analysis_function_call, conversation_history, data=df)
-                if result:
-                    static_analysis_results[analysis_func_name] = result
-                    analysis_chart = result['chart']
-
-                    chat(f'{analysis_chart} is the chart for visualizing {analysis_func_name}. You will need to insert this in the final output.', **params, base64_image=encode_image(analysis_chart))
-            except Exception as e:
-                logging.error(f'Error occurred in handling static_analysis function {analysis_func_name}:', e)
-                continue
-
-
-        # Dynamic Analysis
-        available_libraries = [
-            "geopy",
-            "numpy",
-            "pandas",
-            "scikit-learn",
-            "scipy",
-            "statsmodels",
-        ]
-        ordered_list_libraries = "\n".join([f'{i+1}. {library_name}' for (i, library_name) in enumerate(available_libraries)])
-
-        dynamic_prompt = f"""\
-        Write a Python function to perform an analysis on the dataset. Name the function `dynamic_analysis(data)` where data is a DataFrame object.
-        
-        Follow ALL the following instructions carefully:
-        * The analysis should be distinct from the ones you have performed earlier.
-        * The function should return relevant analysis results as a Python dictionary. Keep the output results small in size.
-        * Limit the dataset to only numerical columns.
-        * The function should handle missing values in `data`.
-        * DO NOT ouput the entire DataFrame object.
-
-        Here is a list of python libraries that you are allowed to use:
-        {ordered_list_libraries}
-
-        Ouput ONLY the Python function and nothing else.
-        """
-
-        execution_env = {}
-        dynamic_analysis_results = {}
-        generated_function = chat(dynamic_prompt, **params)['content']
-
-        # Remove additional formatting from the LLM's output.
-        if generated_function.startswith("```python"):
-            generated_function = generated_function.replace("```python", "", 1).strip().rstrip("```").strip()
-        
-        if generated_function.startswith("```"):
-            generated_function = generated_function[3:-3].strip()
-
-        print(generated_function)
-
-        try:
-            ast.parse(generated_function)
-            logging.info("Code parsed successfully.")
-
-            exec(generated_function, execution_env)
-
-            if 'dynamic_analysis' in execution_env:
-                dynamic_analysis = execution_env['dynamic_analysis']
-                numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
-                dynamic_analysis_results = dynamic_analysis(numeric_df)
-            else:
-                logging.error('Could not find dynamic_analysis function.')
-        except SyntaxError as e:
-            logging.error("Syntax error in generated code for dynamic analysis:", e)
-        except Exception as e:
-            logging.exception("An unexpected error occurred during execution of dynamic_analysis:", e)
-
-        if dynamic_analysis_results:
-            chat(f"Here are the results from the dynamic analysis you performed: {str(dynamic_analysis_results)[:500]}", **params)
-
-        # Narrate a Story
-        narrative_prompt = f"""\
-        Write a story about the analysis. You are already aware of the dataset structure, the generic analysis results, static analysis results, dynamic analysis results, and charts generated for visualizations.
-
-        Describe the following:
-        * The dataset you received, briefly
-        * The analysis you carried out, with charts
-        * The insights you discovered
-        * The implications of your findings (i.e. what to do with the insights)
-
-        Note: Output the story in valid Markdown.
-        Note: Use the things learned in the entire context window.
-        Note: Include ALL the charts you have seen in the correct sections of the markdown.
-        """
-
-        story = chat(narrative_prompt, **params)['content']
-
-        image_pattern = r'!\[.*?\]\(.*?\)'
-        charts_included = bool(re.search(image_pattern, story))
-        if not charts_included:
-            logging.error('Chart not included in the output.')
-            story = chat('Please insert charts in the above data story. Output in valid markdown.', **params)['content']
-
-        write_file('README.md', story)
-
+        generic_analysis_results = handle_function_call(generic_analysis_function_call, 
+        conversation_history, data=df)
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logging.error('Error occurred when handling generic_analysis.', e)
+    
+    if generic_analysis_results and 'correlation_analysis' in generic_analysis_results:
+        corr_chart = generic_analysis_results['correlation_analysis'].get('chart')
+        if corr_chart:
+            chat(f'{corr_chart} is the chart for the correlation matrix. You will need to insert this in the final output.', **params, base64_image=encode_image(corr_chart))
+
+
+    # Static Analysis
+    static_analysis_functions = [
+        'regression_analysis', 
+        'classification_analysis', 
+        'geospatial_analysis', 
+        'time_series_analysis'
+    ]
+
+    ordered_list_analyses = "\n".join([f'{i+1}. {analysis_name}' for (i, analysis_name) in enumerate(static_analysis_functions)])
+
+    static_analysis_prompt = f"""\
+    Call the most appropriate analysis function from the given list below with the correct parameter.
+
+    You have to figure out the correct parameters for the function call.
+
+    Analysis functions:
+    {ordered_list_analyses}
+
+    Note: If an analysis from the list is already performed don't repeat it, select a different one.
+    Note: Make use of the knowledge of prior analyses to make your choice.
+    """
+
+    static_analysis_results = {}
+
+    for _ in range(2):
+        static_analysis_function_call = chat(static_analysis_prompt, **params)['function_call']
+
+        if not static_analysis_function_call:
+            logging.error('Invalid function call!')
+            continue
+
+        analysis_func_name = static_analysis_function_call.get('name')
+
+        if analysis_func_name in static_analysis_results:
+            logging.error(f'Same function called again: {analysis_func_name}')
+            break
+        
+        try:
+            result = handle_function_call(static_analysis_function_call, conversation_history, data=df)
+            if result:
+                static_analysis_results[analysis_func_name] = result
+                analysis_chart = result['chart']
+
+                chat(f'{analysis_chart} is the chart for visualizing {analysis_func_name}. You will need to insert this in the final output.', **params, base64_image=encode_image(analysis_chart))
+        except Exception as e:
+            logging.error(f'Error occurred in handling static_analysis function {analysis_func_name}:', e)
+            continue
+
+
+    # Dynamic Analysis
+    available_libraries = [
+        "geopy",
+        "numpy",
+        "pandas",
+        "scikit-learn",
+        "scipy",
+        "statsmodels",
+    ]
+    ordered_list_libraries = "\n".join([f'{i+1}. {library_name}' for (i, library_name) in enumerate(available_libraries)])
+
+    dynamic_prompt = f"""\
+    Write a Python function to perform an analysis on the dataset. Name the function `dynamic_analysis(data)` where data is a DataFrame object.
+    
+    Follow ALL the following instructions carefully:
+    * The analysis should be distinct from the ones you have performed earlier.
+    * The function should return relevant analysis results as a Python dictionary. Keep the output results small in size.
+    * Limit the dataset to only numerical columns.
+    * The function should handle missing values in `data`.
+    * DO NOT ouput the entire DataFrame object.
+
+    Here is a list of python libraries that you are allowed to use:
+    {ordered_list_libraries}
+
+    Ouput ONLY the Python function and nothing else.
+    """
+
+    execution_env = {}
+    dynamic_analysis_results = {}
+    generated_function = chat(dynamic_prompt, **params)['content']
+
+    # Remove additional formatting from the LLM's output.
+    if generated_function.startswith("```python"):
+        generated_function = generated_function.replace("```python", "", 1).strip().rstrip("```").strip()
+    
+    if generated_function.startswith("```"):
+        generated_function = generated_function[3:-3].strip()
+
+    print(generated_function)
+
+    try:
+        ast.parse(generated_function)
+        logging.info("Code parsed successfully.")
+
+        exec(generated_function, execution_env)
+
+        if 'dynamic_analysis' in execution_env:
+            dynamic_analysis = execution_env['dynamic_analysis']
+            numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
+            dynamic_analysis_results = dynamic_analysis(numeric_df)
+        else:
+            logging.error('Could not find dynamic_analysis function.')
+    except SyntaxError as e:
+        logging.error("Syntax error in generated code for dynamic analysis:", e)
+    except Exception as e:
+        logging.exception("An unexpected error occurred during execution of dynamic_analysis:", e)
+
+    if dynamic_analysis_results:
+        chat(f"Here are the results from the dynamic analysis you performed: {str(dynamic_analysis_results)[:500]}", **params)
+
+    # Narrate a Story
+    narrative_prompt = f"""\
+    Write a story about the analysis. You are already aware of the dataset structure, the generic analysis results, static analysis results, dynamic analysis results, and charts generated for visualizations.
+
+    Describe the following:
+    * The dataset you received, briefly
+    * The analysis you carried out, with charts
+    * The insights you discovered
+    * The implications of your findings (i.e. what to do with the insights)
+
+    Note: Output the story in valid Markdown.
+    Note: Use the things learned in the entire context window.
+    Note: Include ALL the charts you have seen in the correct sections of the markdown.
+    """
+
+    story = chat(narrative_prompt, **params)['content']
+
+    image_pattern = r'!\[.*?\]\(.*?\)'
+    charts_included = bool(re.search(image_pattern, story))
+    if not charts_included:
+        logging.error('Chart not included in the output.')
+        story = chat('Please insert charts in the above data story. Output in valid markdown.', **params)['content']
+
+    write_file('README.md', story)
     
     log_conversation_history(conversation_history)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
